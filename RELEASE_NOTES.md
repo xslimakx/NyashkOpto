@@ -1,5 +1,9 @@
-## NyashkOpto v1.0.0
+# NyashkOpto v1.0.1
 
-NyashkOpto is an LA-2A style optical compressor VST3 plugin.
+Sound-quality pass on the optical compressor.
 
-Downloads: `NyashkOpto-<OS>-VST3.zip`. Unzip and copy `NyashkOpto.vst3` into your VST3 folder (Linux `~/.vst3/`, Windows `C:\\Program Files\\Common Files\\VST3\\`, macOS `~/Library/Audio/Plug-Ins/VST3/`; macOS builds are unsigned: `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/NyashkOpto.vst3`).
+- **Transparent at Peak Reduction 0:** the threshold slides up below 20, so the compressor really does nothing at 0, even on full-scale peaks (new test).
+- **Cleaner ANALOG mode:** the soft saturation uses an anti-aliased (first-order antiderivative) tanh, so it no longer adds aliasing; DC from the asymmetric stage is removed.
+- **Click-free BYPASS:** about 5 ms crossfade instead of a hard switch (new test).
+- **Output ceiling:** gain, trim and saturation can never push the signal over 0 dBFS (soft ceiling at about -0.5 dBFS).
+- **macOS:** the resize grip uses host units, so the window resizes correctly on Retina displays.

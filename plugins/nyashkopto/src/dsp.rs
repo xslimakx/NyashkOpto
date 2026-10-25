@@ -13,6 +13,21 @@ pub struct Params {
     pub trim_db: f32,
 }
 
+/// tanh(1.25 x) / 1.25 with first-order antiderivative anti-aliasing (no oversampling needed for mild drive).
+#[inline]
+fn adaa_tanh(prev: &mut f32, x: f32) -> f32 {
+    const K: f32 = 1.25;
+    // F(x) = ln(cosh(Kx)) / K^2, computed without overflow
+    let f = |v: f32| {
+        let a = (K * v).abs();
+        (a + (1.0 + (-2.0 * a).exp()).ln() - std::f32::consts::LN_2) / (K * K)
+    };
+    let d = x - *prev;
+    let y = if d.abs() < 1e-4 { (K * 0.5 * (x + *prev)).tanh() / K } else { (f(x) - f(*prev)) / d };
+    *prev = x;
+    y
+}
+
 pub struct Comp {
     fs: f32,
     lvl2: f32,
@@ -27,11 +42,15 @@ pub struct Comp {
     hum_ph: f32,
     smooth_gain: f32,
     dc: [f32; 2],
+    // first-order antiderivative anti-aliasing state of the analog stage (per channel)
+    ax: [f32; 2],
+    // bypass crossfade 0 = processed, 1 = bypassed
+    byp: f32,
 }
 
 impl Comp {
     pub fn new(fs: f32) -> Self {
-        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2] }
+        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2], ax: [0.0; 2], byp: 0.0 }
     }
 
     pub fn reset(&mut self) {
@@ -71,7 +90,8 @@ impl Comp {
         let lvl_db = 10.0 * (self.lvl2 + 1e-12).log10() + 3.0; // sine peak-referenced
 
         // ---- gain computer (soft knee)
-        let thr = -p.peak_reduction * 0.40;
+        // below ~20 the threshold slides up so that Peak Reduction 0 really does nothing, even on full-scale peaks
+        let thr = -p.peak_reduction * 0.40 + 8.0 * (1.0 - p.peak_reduction / 20.0).clamp(0.0, 1.0);
         let (ratio, knee) = if p.limit { (12.0f32, 6.0f32) } else { (3.0f32, 12.0f32) };
         let over = lvl_db - thr;
         let target = if over <= -knee * 0.5 {
@@ -109,11 +129,16 @@ impl Comp {
         let g = 10f32.powf(-gr / 20.0) * makeup;
         self.smooth_gain += (g - self.smooth_gain) * 0.05;
         let mut pk = 0.0f32;
+        // click-free bypass: about 5 ms crossfade
+        self.byp += ((p.bypass as u8 as f32) - self.byp) * 0.004;
+        if (self.byp - p.bypass as u8 as f32).abs() < 1e-4 {
+            self.byp = p.bypass as u8 as f32;
+        }
         for c in 0..n {
             let mut y = dry[c] * self.smooth_gain;
             if p.analog > 0 {
                 // gentle tube / transformer style soft saturation (unity at small signals)
-                y = (1.25 * y).tanh() / 1.25;
+                y = adaa_tanh(&mut self.ax[c], y);
                 // remove the DC that asymmetric stages would add
                 let d = &mut self.dc[c];
                 *d += 0.0005 * (y - *d);
@@ -130,16 +155,67 @@ impl Comp {
             }
             // output ceiling: gain can never push the signal over 0 dBFS
             let ya = y.abs();
-            if ya > 0.8 {
-                y = y.signum() * (0.8 + 0.19 * ((ya - 0.8) / 0.19).tanh());
+            if ya > 0.95 {
+                y = y.signum() * (0.95 + 0.0499 * ((ya - 0.95) / 0.0499).tanh());
             }
             let out = dry[c] * (1.0 - p.mix) + y * p.mix;
             pk = pk.max(out.abs());
-            x[c] = if p.bypass { dry[c] } else { out };
+            x[c] = dry[c] * self.byp + out * (1.0 - self.byp);
         }
         let rel = (-1.0 / (0.3 * self.fs)).exp();
         self.out_peak = pk.max(self.out_peak * rel);
         let ipk = dry.iter().take(n).fold(0.0f32, |m, v| m.max(v.abs()));
         self.in_peak = ipk.max(self.in_peak * rel);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn par() -> Params {
+        Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 }
+    }
+    fn run(p: &Params, amp: f32, f: f32, n: usize) -> Vec<f32> {
+        let fs = 48000.0;
+        let mut c = Comp::new(fs);
+        (0..n).map(|i| { let mut x = [amp * (2.0 * std::f32::consts::PI * f * i as f32 / fs).sin(); 2]; c.process(p, &mut x, 2); x[0] }).collect()
+    }
+    #[test]
+    fn transparent_when_nothing_to_compress() {
+        // peak reduction 0 = threshold far above the signal: output equals input, even near full scale
+        for amp in [0.1f32, 0.5, 0.9] {
+            let y = run(&par(), amp, 1000.0, 48000);
+            let fs = 48000.0;
+            let e = y.iter().enumerate().skip(4800).map(|(i, v)| (v - amp * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / fs).sin()).abs()).fold(0.0, f32::max);
+            assert!(e < 2e-3, "amp {amp} err {e}");
+        }
+    }
+    #[test]
+    fn bypass_is_click_free() {
+        let mut p = par();
+        let fs = 48000.0;
+        let mut c = Comp::new(fs);
+        let mut prev = 0.0f32;
+        let mut maxstep = 0.0f32;
+        for i in 0..48000 {
+            p.bypass = i > 24000;
+            p.gain_db = 6.0;
+            let mut x = [0.5 * (2.0 * std::f32::consts::PI * 200.0 * i as f32 / fs).sin(); 2];
+            c.process(&p, &mut x, 2);
+            maxstep = maxstep.max((x[0] - prev).abs());
+            prev = x[0];
+        }
+        assert!(maxstep < 0.05, "step {maxstep}");
+    }
+    #[test]
+    fn adaa_matches_tanh_and_is_finite() {
+        let mut st = 0.0;
+        for i in 0..2000 {
+            let x = (i as f32 * 0.01).sin() * 3.0;
+            let y = adaa_tanh(&mut st, x);
+            assert!(y.is_finite() && y.abs() <= 0.81);
+        }
+        let mut st = 0.1;
+        assert!((adaa_tanh(&mut st, 0.1) - (1.25f32 * 0.1).tanh() / 1.25).abs() < 1e-4);
     }
 }
