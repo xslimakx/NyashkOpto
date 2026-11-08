@@ -117,7 +117,7 @@ impl Default for NyashkOpto {
 
 impl Plugin for NyashkOpto {
     const NAME: &'static str = "NyashkOpto";
-    const VENDOR: &'static str = "NyashkTune";
+    const VENDOR: &'static str = "Nyashk";
     const URL: &'static str = "https://github.com/xslimakx/nyashk-plugins";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
