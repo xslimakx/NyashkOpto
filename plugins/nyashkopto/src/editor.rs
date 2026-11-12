@@ -156,7 +156,11 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                     VuMode::Input => "INPUT  dB",
                     VuMode::Output => "OUTPUT  dB",
                 };
-                clip.text(Pos2::new(vu.center().x, vu.bottom() - 12.0), Align2::CENTER_CENTER, label, mono(10.0), DIM);
+                // cover over the needle's pivot (like a real meter), the label sits on it
+                let cover = Rect::from_min_max(Pos2::new(vu.left() + 2.0, vu.bottom() - 24.0), Pos2::new(vu.right() - 2.0, vu.bottom() - 2.0));
+                clip.rect_filled(cover, CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 }, Color32::from_rgb(0x0d, 0x0d, 0x0d));
+                clip.hline(cover.x_range(), cover.top(), Stroke::new(1.0, LINE));
+                clip.text(Pos2::new(vu.center().x, cover.center().y), Align2::CENTER_CENTER, label, mono(10.0), DIM);
 
                 // VU DISPLAY selector under the window
                 painter.text(Pos2::new(mp.center().x, mp.top() + 190.0), Align2::CENTER_CENTER, "VU DISPLAY", mono(10.0), DIM);

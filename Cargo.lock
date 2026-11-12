@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "nyashkopto"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "nih_plug",
  "nih_plug_egui",
