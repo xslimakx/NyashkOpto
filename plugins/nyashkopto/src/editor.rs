@@ -190,8 +190,27 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                         set_e(setter, &p.analog, m);
                     }
                 }
-                let ix = bp.left() + 124.0;
-                let cw = (bp.right() - 10.0 - ix) / 3.0;
+                // live waveform: input (grey), output (white), gain reduction from the top
+                let wr = Rect::from_min_size(Pos2::new(bp.left() + 122.0, bp.top() + 10.0), Vec2::new(310.0, bp.height() - 20.0));
+                painter.rect_filled(wr, CornerRadius::same(4), Color32::from_rgb(0x07, 0x07, 0x07));
+                painter.hline(wr.left()..=wr.right(), wr.center().y, Stroke::new(1.0, LINE));
+                let cols = meters.wave.read();
+                let w = wr.width() / cols.len() as f32;
+                let (cy, h) = (wr.center().y, wr.height() * 0.5 - 2.0);
+                let wclip = painter.with_clip_rect(wr);
+                for (i, c) in cols.iter().enumerate() {
+                    let x = wr.left() + (i as f32 + 0.5) * w;
+                    let seg = |lo: f32, hi: f32| [Pos2::new(x, cy - hi.clamp(-1.0, 1.0) * h - 0.5), Pos2::new(x, cy - lo.clamp(-1.0, 1.0) * h + 0.5)];
+                    wclip.line_segment(seg(c[0], c[1]), Stroke::new(w + 0.3, Color32::from_rgb(0x3a, 0x3a, 0x3a)));
+                    wclip.line_segment(seg(c[2], c[3]), Stroke::new(w + 0.3, Color32::from_rgb(0xb8, 0xb8, 0xb8)));
+                }
+                // gain reduction: hangs from the top, 0..20 dB over the full height
+                let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(wr.left() + (i as f32 + 0.5) * w, wr.top() + (c[4].clamp(0.0, 20.0) / 20.0) * wr.height())).collect();
+                wclip.add(egui::Shape::line(gr_pts, PathStroke::new(1.5, WHITE)));
+                wclip.text(Pos2::new(wr.left() + 6.0, wr.bottom() - 8.0), Align2::LEFT_CENTER, "WAVE  in / out  ·  GR", mono(9.0), DIM);
+                painter.rect_stroke(wr, CornerRadius::same(4), Stroke::new(1.0, LINE), StrokeKind::Inside);
+                let ix = bp.left() + 442.0;
+                let cw = (bp.right() - 6.0 - ix) / 3.0;
                 let cell = |i: usize| Rect::from_min_size(Pos2::new(ix + cw * i as f32, bp.top() + 6.0), Vec2::new(cw, bp.height() - 12.0));
                 knob(ui, setter, &p.hf, "HI FREQ", cell(0), "Makes the detector react more to high frequencies (sibilance, brightness). FLAT = even response.", false);
                 knob(ui, setter, &p.mix, "MIX", cell(1), "Parallel blend: 0 = dry, 100 = fully compressed.", false);

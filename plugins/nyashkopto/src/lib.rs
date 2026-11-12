@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 pub mod dsp;
+mod demo;
 mod editor;
 mod ui;
 
@@ -14,10 +15,49 @@ pub struct Meters {
     pub gr_db: AtomicU32,
     pub out_db: AtomicU32,
     pub in_db: AtomicU32,
+    pub wave: WaveRing,
 }
+
+/// Columns for the scrolling waveform: input min / max, output min / max, gain reduction (dB).
+pub const WAVE_COLS: usize = 320;
+pub const WAVE_SECONDS: f32 = 4.0;
+pub struct WaveRing {
+    cols: Vec<[AtomicU32; 5]>,
+    pos: std::sync::atomic::AtomicUsize,
+}
+impl WaveRing {
+    fn new() -> Self {
+        Self { cols: (0..WAVE_COLS).map(|_| std::array::from_fn(|_| AtomicU32::new(0))).collect(), pos: std::sync::atomic::AtomicUsize::new(0) }
+    }
+    fn push(&self, v: [f32; 5]) {
+        let p = self.pos.load(Ordering::Relaxed);
+        for (a, x) in self.cols[p % WAVE_COLS].iter().zip(v) {
+            a.store(x.to_bits(), Ordering::Relaxed);
+        }
+        self.pos.store(p.wrapping_add(1), Ordering::Release);
+    }
+    /// Oldest first.
+    pub fn read(&self) -> Vec<[f32; 5]> {
+        let end = self.pos.load(Ordering::Acquire);
+        (0..WAVE_COLS)
+            .map(|i| {
+                let c = &self.cols[end.wrapping_add(i) % WAVE_COLS];
+                std::array::from_fn(|k| f32::from_bits(c[k].load(Ordering::Relaxed)))
+            })
+            .collect()
+    }
+}
+
+/// Audio-thread accumulator for one waveform column.
+#[derive(Default)]
+struct WaveAcc {
+    v: [f32; 5],
+    n: usize,
+}
+
 impl Meters {
     fn new() -> Self {
-        Self { gr_db: AtomicU32::new(0f32.to_bits()), out_db: AtomicU32::new((-90f32).to_bits()), in_db: AtomicU32::new((-90f32).to_bits()) }
+        Self { gr_db: AtomicU32::new(0f32.to_bits()), out_db: AtomicU32::new((-90f32).to_bits()), in_db: AtomicU32::new((-90f32).to_bits()), wave: WaveRing::new() }
     }
     pub fn inp(&self) -> f32 {
         f32::from_bits(self.in_db.load(Ordering::Relaxed))
@@ -107,11 +147,14 @@ pub struct NyashkOpto {
     params: Arc<OptoParams>,
     meters: Arc<Meters>,
     comp: Option<dsp::Comp>,
+    acc: WaveAcc,
+    per_col: usize,
+    fs: f32,
 }
 
 impl Default for NyashkOpto {
     fn default() -> Self {
-        Self { params: Arc::new(OptoParams::default()), meters: Arc::new(Meters::new()), comp: None }
+        Self { params: Arc::new(OptoParams::default()), meters: Arc::new(Meters::new()), comp: None, acc: WaveAcc::default(), per_col: 600, fs: 48000.0 }
     }
 }
 
@@ -140,6 +183,8 @@ impl Plugin for NyashkOpto {
 
     fn initialize(&mut self, _layout: &AudioIOLayout, config: &BufferConfig, _context: &mut impl InitContext<Self>) -> bool {
         self.comp = Some(dsp::Comp::new(config.sample_rate));
+        self.fs = config.sample_rate;
+        self.per_col = ((config.sample_rate * WAVE_SECONDS) as usize / WAVE_COLS).max(1);
         true
     }
 
@@ -150,6 +195,7 @@ impl Plugin for NyashkOpto {
     }
 
     fn process(&mut self, buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, _context: &mut impl ProcessContext<Self>) -> ProcessStatus {
+        demo::fill(buffer, self.fs);
         let Some(comp) = self.comp.as_mut() else { return ProcessStatus::Normal };
         let p = &self.params;
         for mut frame in buffer.iter_samples() {
@@ -173,9 +219,22 @@ impl Plugin for NyashkOpto {
             for (i, s) in frame.iter_mut().enumerate().take(n) {
                 x[i] = *s;
             }
+            let xin = if n == 2 { 0.5 * (x[0] + x[1]) } else { x[0] };
             comp.process(&dp, &mut x, n);
             for (i, s) in frame.iter_mut().enumerate().take(n) {
                 *s = x[i];
+            }
+            let xout = if n == 2 { 0.5 * (x[0] + x[1]) } else { x[0] };
+            let a = &mut self.acc;
+            a.v[0] = a.v[0].min(xin);
+            a.v[1] = a.v[1].max(xin);
+            a.v[2] = a.v[2].min(xout);
+            a.v[3] = a.v[3].max(xout);
+            a.v[4] = a.v[4].max(comp.gr_db);
+            a.n += 1;
+            if a.n >= self.per_col {
+                self.meters.wave.push(a.v);
+                *a = WaveAcc::default();
             }
         }
         self.meters.gr_db.store(comp.gr_db.to_bits(), Ordering::Relaxed);

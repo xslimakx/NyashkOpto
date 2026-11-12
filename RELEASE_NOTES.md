@@ -1,3 +1,7 @@
+# NyashkOpto v1.0.2
+
+- **Live waveform:** the last 4 seconds of input (grey) and output (white) with the gain reduction line hanging from the top, so you can see the compressor working.
+
 # NyashkOpto v1.0.1
 
 Sound-quality pass on the optical compressor.
