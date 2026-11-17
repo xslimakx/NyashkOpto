@@ -1,3 +1,8 @@
+# NyashkOpto v1.0.4
+
+- **Waveform without breaks:** the live waveform was drawn as one thin line per column, which overlapped unevenly on the pixel grid and showed stripes and gaps. It is now one continuous filled band for the input and one for the output.
+- The waveform scrolls smoothly between audio blocks (and the window redraws at 60 fps).
+
 # NyashkOpto v1.0.3
 
 - **Alt-tab fix (Linux):** after alt-tab, minimising or covering the window, parts of the picture (backgrounds, knobs, images) could stay blank until something on them moved. The window is now drawn again in full whenever the system throws its contents away, and pictures are no longer lost while the window is hidden or a frame is skipped.

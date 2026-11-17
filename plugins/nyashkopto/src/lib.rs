@@ -36,6 +36,10 @@ impl WaveRing {
         }
         self.pos.store(p.wrapping_add(1), Ordering::Release);
     }
+    /// How many columns were ever written (moves on by one per column).
+    pub fn written(&self) -> usize {
+        self.pos.load(Ordering::Acquire)
+    }
     /// Oldest first.
     pub fn read(&self) -> Vec<[f32; 5]> {
         let end = self.pos.load(Ordering::Acquire);

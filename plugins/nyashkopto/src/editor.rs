@@ -6,7 +6,7 @@ use nih_plug_egui::{
     egui::{self, epaint::PathStroke, Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2},
 };
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ui::*;
 use crate::{AnalogMode, Meters, OptoParams, VuMode};
@@ -16,6 +16,9 @@ const BASE_H: f32 = 470.0;
 
 struct Gui {
     needle: f32,
+    /// smooth scrolling of the waveform between audio blocks
+    wave_pos: usize,
+    wave_t: Instant,
 }
 
 pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Editor>> {
@@ -23,7 +26,7 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
     let size_state = editor_state.clone();
     create_egui_editor(
         editor_state,
-        Gui { needle: 0.0 },
+        Gui { needle: 0.0, wave_pos: 0, wave_t: Instant::now() },
         |ctx, _| {
             let mut v = egui::Visuals::dark();
             v.panel_fill = BG;
@@ -35,7 +38,7 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
             ctx.set_visuals(v);
         },
         move |ctx, setter, st| {
-            ctx.request_repaint_after(Duration::from_millis(33));
+            ctx.request_repaint_after(Duration::from_millis(16));
             let p = &*params;
             let mode = p.vu.value();
             let target = match mode {
@@ -198,18 +201,43 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                 let wr = Rect::from_min_size(Pos2::new(bp.left() + 122.0, bp.top() + 10.0), Vec2::new(310.0, bp.height() - 20.0));
                 painter.rect_filled(wr, CornerRadius::same(4), Color32::from_rgb(0x07, 0x07, 0x07));
                 painter.hline(wr.left()..=wr.right(), wr.center().y, Stroke::new(1.0, LINE));
+                // one continuous filled band per trace (min..max of every column) instead of a line
+                // per column: per-column strokes overlapped unevenly on the pixel grid and drew
+                // stripes / breaks across the waveform. It also scrolls smoothly between blocks.
                 let cols = meters.wave.read();
-                let w = wr.width() / cols.len() as f32;
-                let (cy, h) = (wr.center().y, wr.height() * 0.5 - 2.0);
-                let wclip = painter.with_clip_rect(wr);
-                for (i, c) in cols.iter().enumerate() {
-                    let x = wr.left() + (i as f32 + 0.5) * w;
-                    let seg = |lo: f32, hi: f32| [Pos2::new(x, cy - hi.clamp(-1.0, 1.0) * h - 0.5), Pos2::new(x, cy - lo.clamp(-1.0, 1.0) * h + 0.5)];
-                    wclip.line_segment(seg(c[0], c[1]), Stroke::new(w + 0.3, Color32::from_rgb(0x3a, 0x3a, 0x3a)));
-                    wclip.line_segment(seg(c[2], c[3]), Stroke::new(w + 0.3, Color32::from_rgb(0xb8, 0xb8, 0xb8)));
+                let wpos = meters.wave.written();
+                if wpos != st.wave_pos {
+                    st.wave_pos = wpos;
+                    st.wave_t = Instant::now();
                 }
+                let col_s = crate::WAVE_SECONDS / crate::WAVE_COLS as f32;
+                let frac = (st.wave_t.elapsed().as_secs_f32() / col_s).min(1.0);
+                let nc = cols.len();
+                let w = wr.width() / (nc as f32 - 1.0);
+                let (cy, h) = (wr.center().y, wr.height() * 0.5 - 2.0);
+                let wclip = painter.with_clip_rect(wr.shrink(1.0));
+                let xat = |i: usize| wr.left() + (i as f32 - frac) * w;
+                let yat = |v: f32| cy - v.clamp(-1.0, 1.0) * h;
+                let band = |lo: usize, hi: usize, col: Color32| {
+                    let mut mesh = egui::Mesh::default();
+                    let uv = egui::epaint::WHITE_UV;
+                    for (i, c) in cols.iter().enumerate() {
+                        let x = xat(i);
+                        // at least a hairline, so silence still reads as a line
+                        let (top, bot) = (yat(c[hi]) - 0.5, yat(c[lo]) + 0.5);
+                        let b = mesh.vertices.len() as u32;
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(x, top), uv, color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(x, bot), uv, color: col });
+                        if i > 0 {
+                            mesh.indices.extend_from_slice(&[b - 2, b, b + 1, b - 2, b + 1, b - 1]);
+                        }
+                    }
+                    wclip.add(egui::Shape::mesh(mesh));
+                };
+                band(0, 1, Color32::from_rgb(0x44, 0x44, 0x44));
+                band(2, 3, Color32::from_rgb(0xb0, 0xb0, 0xb0));
                 // gain reduction: hangs from the top, 0..20 dB over the full height
-                let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(wr.left() + (i as f32 + 0.5) * w, wr.top() + (c[4].clamp(0.0, 20.0) / 20.0) * wr.height())).collect();
+                let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(xat(i), wr.top() + (c[4].clamp(0.0, 20.0) / 20.0) * wr.height())).collect();
                 wclip.add(egui::Shape::line(gr_pts, PathStroke::new(1.5, WHITE)));
                 wclip.text(Pos2::new(wr.left() + 6.0, wr.bottom() - 8.0), Align2::LEFT_CENTER, "WAVE  in / out  ·  GR", mono(9.0), DIM);
                 painter.rect_stroke(wr, CornerRadius::same(4), Stroke::new(1.0, LINE), StrokeKind::Inside);
