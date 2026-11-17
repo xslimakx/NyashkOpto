@@ -1,3 +1,8 @@
+# NyashkOpto v1.0.5
+
+- **No colouring of hot signals:** the output safety ceiling started at -0.45 dBFS and softly squashed any peak above it, even with Peak Reduction at 0. It now starts at -0.04 dBFS, so anything that already fits passes unchanged.
+- New behaviour tests: gain reduction rises steadily with Peak Reduction, Compress ~3:1 / Limit ~12:1, attack ~8 ms, release 50 % in ~120 ms with a slow tail of seconds, HF follow only affects highs, linked stereo, same result at 44.1 and 96 kHz, hum only at the chosen mains frequency.
+
 # NyashkOpto v1.0.4
 
 - **Waveform without breaks:** the live waveform was drawn as one thin line per column, which overlapped unevenly on the pixel grid and showed stripes and gaps. It is now one continuous filled band for the input and one for the output.

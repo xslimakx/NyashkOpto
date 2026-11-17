@@ -154,9 +154,10 @@ impl Comp {
                 y += 6.3e-5 * (self.hum_ph.sin() + 0.5 * (2.0 * self.hum_ph).sin());
             }
             // output ceiling: gain can never push the signal over 0 dBFS
+            // (the soft knee starts at -0.04 dBFS, so anything that already fits is left alone)
             let ya = y.abs();
-            if ya > 0.95 {
-                y = y.signum() * (0.95 + 0.0499 * ((ya - 0.95) / 0.0499).tanh());
+            if ya > 0.995 {
+                y = y.signum() * (0.995 + 0.0049 * ((ya - 0.995) / 0.0049).tanh());
             }
             let out = dry[c] * (1.0 - p.mix) + y * p.mix;
             pk = pk.max(out.abs());
