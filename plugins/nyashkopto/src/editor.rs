@@ -46,7 +46,7 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
             ctx.set_visuals(v);
         },
         move |ctx, setter, st| {
-            ctx.request_repaint_after(Duration::from_millis(16));
+            ctx.request_repaint_after(Duration::from_millis(33));
             if st.hw.is_none() {
                 st.hw = Some(Hw::load(ctx, lay::ASSETS));
             }
