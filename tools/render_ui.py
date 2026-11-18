@@ -13,7 +13,7 @@ for id, cx, lbl in [('gain', 150, 'GAIN'), ('peak', 650, 'PEAK REDUCTION')]:
     p.knob(id, cx, 180, 104, 'alu', label=lbl, label_dy=112, lsz=9.5, lcol=p.ink,
            scale=dict(r=78, n=41, major=4, labels=labels, lsz=8), led=dict(r=67, n=31))
 p.vu('vu', 280, 84, 240, 172, ACC, '')
-p.readout('vu_label', 400, 214, size=8)
+p.readout('vu_label', 400, 244, size=7.5, col=(170, 165, 155, 255))
 for id, x, t in [('vu_in', 348, 'IN'), ('vu_gr', 400, 'GR'), ('vu_out', 452, 'OUT')]:
     p.button(id, x, 282, 46, 20, t)
 p.text('METER', 400, 302, 7, None, True, sp=1)

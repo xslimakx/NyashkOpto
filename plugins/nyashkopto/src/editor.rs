@@ -81,11 +81,11 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                 let vu = hw::find(lay::VUS, "vu", |x| x.id);
                 let label = match mode {
                     VuMode::Gr => "GAIN REDUCTION",
-                    VuMode::Input => "INPUT  (0 VU = -18 dBFS)",
-                    VuMode::Output => "OUTPUT  (0 VU = -18 dBFS)",
+                    VuMode::Input => "INPUT   0 VU = -18 dBFS",
+                    VuMode::Output => "OUTPUT   0 VU = -18 dBFS",
                 };
-                hw::text(&painter, hwr, hw::find(lay::TEXTS, "vu_label", |x| x.id), label);
                 hw::needle(&painter, hwr, vu, st.needle, Color32::from_rgb(255, 120, 60));
+                hw::text(&painter, hwr, hw::find(lay::TEXTS, "vu_label", |x| x.id), label);
                 for (id, m, tip) in [
                     ("vu_in", VuMode::Input, "Meter shows the level going into the plugin."),
                     ("vu_gr", VuMode::Gr, "Meter shows the gain reduction."),

@@ -317,12 +317,32 @@ pub fn needle(p: &Painter, hw: &Hw, v: &VuL, t: f32, col: Color32) {
     let (r0, r1) = (0.0, v.r + 6.0);
     clip.line_segment([pv + dir * r0 + Vec2::new(3.0, 4.0), pv + dir * r1 + Vec2::new(3.0, 4.0)], Stroke::new(2.2_f32, Color32::from_black_alpha(110)));
     clip.line_segment([pv + dir * r0, pv + dir * r1], Stroke::new(1.6_f32, col));
-    // the pivot housing the needle comes out of (half of it shows above the bottom of the face)
-    let hr = (v.r * 0.16).max(10.0);
-    clip.circle_filled(pv + Vec2::new(0.0, -1.5), hr + 2.0, Color32::from_black_alpha(90));
-    clip.circle_filled(pv, hr, Color32::from_rgb(24, 24, 26));
-    clip.circle_stroke(pv, hr - 0.5, Stroke::new(1.0_f32, Color32::from_white_alpha(28)));
-    clip.circle_filled(pv + Vec2::new(-hr * 0.25, -hr * 0.45), hr * 0.18, Color32::from_white_alpha(14));
+    // the curved black cover across the bottom of the face: the needle comes out from under it
+    let clip = p.with_clip_rect(hw.rect(v.rect));
+    let fr = hw.rect(v.rect);
+    let top_c = fr.bottom() - 30.0; // cover height in the middle
+    let top_e = fr.bottom() - 20.0; // ... and at the sides
+    let half = fr.width() * 0.5;
+    let sag = top_e - top_c;
+    let rad = (half * half + sag * sag) / (2.0 * sag);
+    let ccx = fr.center().x;
+    let ccy = top_c + rad;
+    let n = 40;
+    let arc: Vec<Pos2> = (0..=n)
+        .map(|i| {
+            let x = fr.left() + fr.width() * i as f32 / n as f32;
+            Pos2::new(x, ccy - (rad * rad - (x - ccx) * (x - ccx)).max(0.0).sqrt())
+        })
+        .collect();
+    let mut poly = arc.clone();
+    poly.push(fr.right_bottom() + Vec2::new(0.0, 4.0));
+    poly.push(fr.left_bottom() + Vec2::new(0.0, 4.0));
+    // soft shadow the cover throws onto the face
+    let sh: Vec<Pos2> = arc.iter().map(|p| *p + Vec2::new(0.0, -3.0)).collect();
+    clip.add(egui::Shape::line(sh, egui::epaint::PathStroke::new(6.0_f32, Color32::from_black_alpha(45))));
+    clip.add(egui::Shape::convex_polygon(poly, Color32::from_rgb(16, 16, 18), Stroke::NONE));
+    // lit top edge of the cover
+    clip.add(egui::Shape::line(arc, egui::epaint::PathStroke::new(1.0_f32, Color32::from_white_alpha(34))));
     hw.image(p, v.glass, hw.rect(v.rect), Color32::WHITE);
 }
 

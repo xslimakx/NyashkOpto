@@ -50,5 +50,5 @@ pub const VUS: &[VuL] = &[
 pub const LADDERS: &[LadderL] = &[
 ];
 pub const TEXTS: &[TextL] = &[
-    TextL { id: "vu_label", pos: (400.00, 214.00), anchor: "mm", size: 8.00, col: [232,230,224] },
+    TextL { id: "vu_label", pos: (400.00, 244.00), anchor: "mm", size: 7.50, col: [170,165,155] },
 ];
