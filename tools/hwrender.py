@@ -348,7 +348,7 @@ class Panel:
         face = np.array([0.02, 0.018, 0.016]) + np.array(accent) / 255 * 0.30 * glow[..., None]
         face *= (1 + 0.02 * noise(H_, W_, 0.7))[..., None]
         im = to_img(face).convert('RGBA'); vd = ImageDraw.Draw(im)
-        Rr = min(H_ * 0.78, W_ * 0.36); fcx, fcy = W_ / 2, H_ * 0.30 + Rr
+        fcx, fcy = W_ / 2, H_ - 5 * S; Rr = min(fcy - 36 * S, W_ * 0.40)
         ang = lambda db: -48 + 96 * (10 ** (db / 20) - 0.1) / (10 ** (3 / 20) - 0.1)
         wcol = (235, 232, 224, 255); acc = tuple(accent) + (255,)
         arcp = lambda a0, a1, r: [(fcx + r * math.sin(math.radians(q)), fcy - r * math.cos(math.radians(q))) for q in np.linspace(a0, a1, 60)]
@@ -359,7 +359,7 @@ class Panel:
             vd.line([(fcx + Rr * math.sin(q), fcy - Rr * math.cos(q)), (fcx + (Rr + 9 * S) * math.sin(q), fcy - (Rr + 9 * S) * math.cos(q))], fill=cc, width=int(1.6 * S))
             if small and db in (-7, -2, -1, 1, 2): continue
             vd.text((fcx + (Rr + 20 * S) * math.sin(q), fcy - (Rr + 20 * S) * math.cos(q)), t, font=font(9 * S), fill=cc, anchor='mm')
-        if label: vd.text((fcx, H_ * 0.86), label, font=font(7 * S, True), fill=(150, 145, 135, 255), anchor='mm')
+        if label: vd.text((fcx, fcy - Rr * 0.42), label, font=font(7 * S, True), fill=(150, 145, 135, 255), anchor='mm')
         im = im.filter(ImageFilter.GaussianBlur(0.35))
         self.img.alpha_composite(im, (int(x * S), int(y * S))); self.refresh()
         name = 'glass_' + id; self.overlays[name] = glass(W_, H_, 6)

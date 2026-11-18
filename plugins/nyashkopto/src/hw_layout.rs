@@ -45,10 +45,10 @@ pub const SCREENS: &[ScreenL] = &[
     ScreenL { id: "wave", rect: (290.00, 344.00, 250.00, 90.00), glass: "glass_wave" },
 ];
 pub const VUS: &[VuL] = &[
-    VuL { id: "vu", rect: (280.00, 84.00, 240.00, 172.00), pivot: (400.00, 222.00), r: 86.40, glass: "glass_vu" },
+    VuL { id: "vu", rect: (280.00, 84.00, 240.00, 172.00), pivot: (400.00, 251.00), r: 96.00, glass: "glass_vu" },
 ];
 pub const LADDERS: &[LadderL] = &[
 ];
 pub const TEXTS: &[TextL] = &[
-    TextL { id: "vu_label", pos: (400.00, 238.00), anchor: "mm", size: 8.00, col: [232,230,224] },
+    TextL { id: "vu_label", pos: (400.00, 214.00), anchor: "mm", size: 8.00, col: [232,230,224] },
 ];
