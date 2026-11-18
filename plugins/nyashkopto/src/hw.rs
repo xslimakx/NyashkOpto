@@ -26,6 +26,7 @@ pub struct BtnL {
     pub rect: (f32, f32, f32, f32),
     pub tex: &'static str,
     pub tex_size: (f32, f32),
+    pub glow: [u8; 3],
 }
 pub struct ScreenL {
     pub id: &'static str,
@@ -292,14 +293,22 @@ pub fn button(ui: &mut Ui, hw: &Hw, b: &BtnL, on: bool, tip: &str) -> bool {
     let pressed = resp.is_pointer_button_down_on();
     // the lamp behind the cap warms up / fades out instead of snapping
     let lit = ui.ctx().animate_bool_with_time(egui::Id::new(("hwbtn_lit", b.id)), on, 0.16);
+    let push = if pressed { Vec2::new(0.0, 0.7) } else { Vec2::ZERO };
     if lit > 0.005 {
-        let tr = Rect::from_center_size(r.center() + Vec2::new(0.0, if pressed { 0.6 } else { 0.0 }), Vec2::new(b.tex_size.0, b.tex_size.1));
+        // light spilling onto the panel around the cap: additive, round, no frame
+        let add = |k: f32| {
+            let m = (k * lit).min(1.0);
+            Color32::from_rgba_premultiplied((b.glow[0] as f32 * m) as u8, (b.glow[1] as f32 * m) as u8, (b.glow[2] as f32 * m) as u8, 0)
+        };
+        hw.image(p, "glow", Rect::from_center_size(r.center(), Vec2::new(r.width() * 1.9 + 30.0, r.height() * 2.0 + 20.0)), add(0.30));
+        hw.image(p, "glow", Rect::from_center_size(r.center(), Vec2::new(r.width() * 1.25 + 8.0, r.height() * 1.4 + 6.0)), add(0.38));
+        let tr = Rect::from_center_size(r.center() + push, Vec2::new(b.tex_size.0, b.tex_size.1));
         hw.image(p, b.tex, tr, Color32::WHITE.gamma_multiply(lit));
     }
     if pressed {
-        p.rect_filled(r.shrink(1.0), 4.0, Color32::from_black_alpha(50));
+        p.rect_filled(r.translate(push), 3.5, Color32::from_black_alpha(45));
     } else if resp.hovered() {
-        p.rect_filled(r.shrink(1.0), 4.0, Color32::from_white_alpha(10));
+        p.rect_filled(r, 3.5, Color32::from_white_alpha(8));
     }
     let clicked = resp.clicked();
     if !tip.is_empty() {

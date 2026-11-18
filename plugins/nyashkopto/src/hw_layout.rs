@@ -30,16 +30,16 @@ pub const KNOBS: &[KnobL] = &[
     KnobL { id: "trim", c: (738.00, 380.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: true },
 ];
 pub const BUTTONS: &[BtnL] = &[
-    BtnL { id: "power", rect: (696.00, 21.00, 64.00, 22.00), tex: "btn_power", tex_size: (88.00, 46.00) },
-    BtnL { id: "vu_in", rect: (325.00, 272.00, 46.00, 20.00), tex: "btn_vu_in", tex_size: (70.00, 44.00) },
-    BtnL { id: "vu_gr", rect: (377.00, 272.00, 46.00, 20.00), tex: "btn_vu_gr", tex_size: (70.00, 44.00) },
-    BtnL { id: "vu_out", rect: (429.00, 272.00, 46.00, 20.00), tex: "btn_vu_out", tex_size: (70.00, 44.00) },
-    BtnL { id: "comp", rect: (48.00, 355.00, 64.00, 22.00), tex: "btn_comp", tex_size: (88.00, 46.00) },
-    BtnL { id: "limit", rect: (48.00, 385.00, 64.00, 22.00), tex: "btn_limit", tex_size: (88.00, 46.00) },
-    BtnL { id: "makeup", rect: (123.00, 355.00, 64.00, 22.00), tex: "btn_makeup", tex_size: (88.00, 46.00) },
-    BtnL { id: "an_off", rect: (198.00, 355.00, 64.00, 22.00), tex: "btn_an_off", tex_size: (88.00, 46.00) },
-    BtnL { id: "an_50", rect: (197.50, 385.00, 31.00, 22.00), tex: "btn_an_50", tex_size: (55.00, 46.00) },
-    BtnL { id: "an_60", rect: (231.50, 385.00, 31.00, 22.00), tex: "btn_an_60", tex_size: (55.00, 46.00) },
+    BtnL { id: "power", rect: (696.00, 21.00, 64.00, 22.00), tex: "btn_power", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "vu_in", rect: (325.00, 272.00, 46.00, 20.00), tex: "btn_vu_in", tex_size: (46.00, 20.00), glow: [255,166,64] },
+    BtnL { id: "vu_gr", rect: (377.00, 272.00, 46.00, 20.00), tex: "btn_vu_gr", tex_size: (46.00, 20.00), glow: [255,166,64] },
+    BtnL { id: "vu_out", rect: (429.00, 272.00, 46.00, 20.00), tex: "btn_vu_out", tex_size: (46.00, 20.00), glow: [255,166,64] },
+    BtnL { id: "comp", rect: (48.00, 355.00, 64.00, 22.00), tex: "btn_comp", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "limit", rect: (48.00, 385.00, 64.00, 22.00), tex: "btn_limit", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "makeup", rect: (123.00, 355.00, 64.00, 22.00), tex: "btn_makeup", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "an_off", rect: (198.00, 355.00, 64.00, 22.00), tex: "btn_an_off", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "an_50", rect: (197.50, 385.00, 31.00, 22.00), tex: "btn_an_50", tex_size: (31.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "an_60", rect: (231.50, 385.00, 31.00, 22.00), tex: "btn_an_60", tex_size: (31.00, 22.00), glow: [255,166,64] },
 ];
 pub const SCREENS: &[ScreenL] = &[
     ScreenL { id: "wave", rect: (290.00, 344.00, 250.00, 90.00), glass: "glass_wave" },
