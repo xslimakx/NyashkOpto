@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub mod dsp;
 mod demo;
 mod editor;
+mod hw;
+mod hw_layout;
 mod ui;
 
 pub struct Meters {

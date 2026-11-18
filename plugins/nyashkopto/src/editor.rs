@@ -1,24 +1,34 @@
-//! NyashkOpto GUI: same black / white / grey look as NyashkTune.
+//! NyashkOpto GUI: modern analog faceplate (pre-rendered in tools/render_ui.py, see hw.rs).
 
 use nih_plug::prelude::*;
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{self, epaint::PathStroke, Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2},
+    egui::{self, epaint::PathStroke, Color32, Pos2, Rect, Sense, Stroke, Vec2},
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::ui::*;
+use crate::hw::{self, Hw};
+use crate::hw_layout as lay;
+use crate::ui::{set_b, set_e};
 use crate::{AnalogMode, Meters, OptoParams, VuMode};
 
-const BASE_W: f32 = 800.0;
-const BASE_H: f32 = 470.0;
+const BASE_W: f32 = lay::W;
+const BASE_H: f32 = lay::H;
 
 struct Gui {
+    hw: Option<Hw>,
     needle: f32,
     /// smooth scrolling of the waveform between audio blocks
     wave_pos: usize,
     wave_t: Instant,
+}
+
+fn k(id: &str) -> &'static hw::KnobL {
+    hw::find(lay::KNOBS, id, |x| x.id)
+}
+fn b(id: &str) -> &'static hw::BtnL {
+    hw::find(lay::BUTTONS, id, |x| x.id)
 }
 
 pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Editor>> {
@@ -26,184 +36,95 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
     let size_state = editor_state.clone();
     create_egui_editor(
         editor_state,
-        Gui { needle: 0.0, wave_pos: 0, wave_t: Instant::now() },
-        |ctx, _| {
+        Gui { hw: None, needle: 0.0, wave_pos: 0, wave_t: Instant::now() },
+        |ctx, st| {
+            // a new window gets a new egui context: textures must be loaded again
+            st.hw = None;
             let mut v = egui::Visuals::dark();
-            v.panel_fill = BG;
-            v.window_fill = PANEL;
-            v.extreme_bg_color = PANEL;
-            v.override_text_color = Some(WHITE);
-            v.selection.bg_fill = Color32::from_rgb(64, 64, 64);
-            v.selection.stroke = Stroke::new(1.0, WHITE);
+            v.override_text_color = Some(Color32::from_rgb(232, 230, 224));
+            v.selection.bg_fill = Color32::from_rgb(120, 80, 30);
             ctx.set_visuals(v);
         },
         move |ctx, setter, st| {
             ctx.request_repaint_after(Duration::from_millis(16));
+            if st.hw.is_none() {
+                st.hw = Some(Hw::load(ctx, lay::ASSETS));
+            }
             let p = &*params;
             let mode = p.vu.value();
+            // the needle reads like the original: GR swings left from 0 VU, IN / OUT read
+            // the level with 0 VU = -18 dBFS
             let target = match mode {
-                VuMode::Gr => meters.gr().clamp(0.0, 20.0),
-                VuMode::Input => meters.inp().clamp(-30.0, 6.0),
-                VuMode::Output => meters.out().clamp(-30.0, 6.0),
+                VuMode::Gr => hw::vu_t(-meters.gr().clamp(0.0, 30.0)),
+                VuMode::Input => hw::vu_t(meters.inp() + 18.0),
+                VuMode::Output => hw::vu_t(meters.out() + 18.0),
             };
-            if (target - st.needle).abs() > 15.0 && mode != VuMode::Gr {
-                st.needle = target;
-            }
-            st.needle += (target - st.needle) * 0.35;
+            // VU ballistics: ~300 ms to 99 %
+            st.needle += (target - st.needle) * 0.22;
+            let accent = hw::c32(lay::ACCENT);
 
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_rgb(14, 14, 15))).show(ctx, |ui| {
                 let full = ui.max_rect();
-                let o = full.min;
-                let rect = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(Pos2::new(o.x + x, o.y + y), Vec2::new(w, h));
+                let hwr = st.hw.as_mut().unwrap();
+                hwr.o = full.min;
+                let hwr = st.hw.as_ref().unwrap();
                 let painter = ui.painter().clone();
+                hwr.background(&painter, BASE_W, BASE_H);
 
-                // ---- header
-                let time = ui.input(|i| i.time);
-                painter.text(Pos2::new(o.x + 18.0, o.y + 34.0), Align2::LEFT_CENTER, "Nyashk", mono(19.0), WHITE);
-                painter.text(Pos2::new(o.x + 18.0 + 6.0 * 11.4, o.y + 34.0), Align2::LEFT_CENTER, "Opto", mono(19.0), DIM);
-                if ((time * 2.0) as i64) % 2 == 0 {
-                    painter.text(Pos2::new(o.x + 18.0 + 10.0 * 11.4, o.y + 34.0), Align2::LEFT_CENTER, "_", mono(19.0), WHITE);
-                }
-                painter.text(Pos2::new(o.x + 200.0, o.y + 36.0), Align2::LEFT_CENTER, "OPTICAL COMPRESSOR / LIMITER", mono(10.5), DIM);
-                painter.hline(o.x + 14.0..=o.x + BASE_W - 14.0, o.y + 58.0, Stroke::new(1.0, LINE));
-                if pill_tip(ui, rect(BASE_W - 14.0 - 76.0, 22.0, 76.0, 24.0), "BYPASS", p.bypass.value(), "Bypass the whole plugin.") {
+                // ---- top: power, the two big knobs, the meter
+                if hw::button(ui, hwr, b("power"), !p.bypass.value(), "Power: off bypasses the whole plugin.") {
                     set_b(setter, &p.bypass, !p.bypass.value());
                 }
-
-                // ---- main panel
-                let mp = rect(14.0, 70.0, BASE_W - 28.0, 256.0);
-                painter.rect_filled(mp, CornerRadius::same(6), PANEL);
-                painter.rect_stroke(mp, CornerRadius::same(6), Stroke::new(1.0, LINE), StrokeKind::Inside);
-
-                // left column: mode switches
-                let lx = mp.left() + 12.0;
-                let limit = p.limit.value();
-                painter.text(Pos2::new(lx, mp.top() + 18.0), Align2::LEFT_CENTER, "MODE", mono(10.0), DIM);
-                if pill_tip(ui, Rect::from_min_size(Pos2::new(lx, mp.top() + 30.0), Vec2::new(96.0, 26.0)), "COMPRESS", !limit,
-                    "COMPRESS: gentle, musical compression (ratio about 3:1, soft knee). Good for vocals, bass, mix glue.") {
-                    set_b(setter, &p.limit, false);
-                }
-                if pill_tip(ui, Rect::from_min_size(Pos2::new(lx, mp.top() + 62.0), Vec2::new(96.0, 26.0)), "LIMIT", limit,
-                    "LIMIT: fast, firm limiting (ratio about 12:1). Catches peaks hard and keeps the level steady.") {
-                    set_b(setter, &p.limit, true);
-                }
-                let am = p.auto_makeup.value();
-                painter.text(Pos2::new(lx, mp.top() + 116.0), Align2::LEFT_CENTER, "AUTO MAKEUP", mono(10.0), DIM);
-                if pill_tip(ui, Rect::from_min_size(Pos2::new(lx, mp.top() + 128.0), Vec2::new(96.0, 26.0)), if am { "ON" } else { "OFF" }, am,
-                    "AUTO MAKEUP: automatically adds back part of the level lost to compression, so loudness stays close to the input.") {
-                    set_b(setter, &p.auto_makeup, !am);
-                }
-
-                // big knobs with 0..100 scales
-                let gain_cell = rect(225.0 - 85.0, 70.0 + 6.0, 170.0, 244.0);
-                let peak_cell = rect(575.0 - 85.0, 70.0 + 6.0, 170.0, 244.0);
-                let big_knob = |ui: &mut Ui, cell: Rect| {
-                    let c = Pos2::new(cell.center().x, cell.top() + 84.0);
-                    let rr = 62.0f32;
-                    // ticks 0..100 (270 degree sweep, starting at 225 deg)
-                    for i in 0..=10 {
-                        let t = i as f32 / 10.0;
-                        let a = (225.0f32 - 270.0 * t).to_radians();
-                        let (ca, sa) = (a.cos(), a.sin());
-                        ui.painter().line_segment([Pos2::new(c.x + (rr + 4.0) * ca, c.y - (rr + 4.0) * sa), Pos2::new(c.x + (rr + 10.0) * ca, c.y - (rr + 10.0) * sa)], Stroke::new(if i % 5 == 0 { 1.5 } else { 1.0 }, if i % 5 == 0 { WHITE } else { DIM }));
-                        ui.painter().text(Pos2::new(c.x + (rr + 19.0) * ca, c.y - (rr + 19.0) * sa), Align2::CENTER_CENTER, format!("{}", i * 10), mono(9.5), DIM);
-                    }
-                };
-                big_knob(ui, gain_cell);
-                big_knob(ui, peak_cell);
-                let kcell = |c: Rect| Rect::from_min_size(Pos2::new(c.left(), c.top() + 36.0), Vec2::new(c.width(), 200.0));
-                knob_r(ui, setter, &p.gain, "GAIN", kcell(gain_cell), "Make-up gain after compression, 0-100. About 33 is unity (0 dB), 100 is +20 dB. The output is soft-limited so it never goes over 0 dBFS.", false, 46.0);
-                knob_r(ui, setter, &p.peak, "PEAK REDUCTION", kcell(peak_cell), "How much signal feeds the optical cell, 0-100. More = more compression.", false, 46.0);
-
-                // VU window in the centre
-                let vu = Rect::from_center_size(Pos2::new(mp.center().x, mp.top() + 100.0), Vec2::new(172.0, 148.0));
-                painter.rect_filled(vu, CornerRadius::same(8), Color32::from_rgb(0x05, 0x05, 0x05));
-                painter.rect_stroke(vu, CornerRadius::same(8), Stroke::new(1.5, DIM), StrokeKind::Inside);
-                let clip = ui.painter().with_clip_rect(vu.shrink(2.0));
-                let pivot = Pos2::new(vu.center().x, vu.bottom() + 40.0);
-                let rad = 142.0f32;
-                let (lo, hi) = match mode {
-                    VuMode::Gr => (0.0f32, 20.0f32),
-                    _ => (-30.0f32, 6.0f32),
-                };
-                let ang = |v: f32| -> f32 {
-                    let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
-                    (125.0f32 - 70.0 * t).to_radians()
-                };
-                let at = |r: f32, v: f32| -> Pos2 {
-                    let a = ang(v);
-                    Pos2::new(pivot.x + r * a.cos(), pivot.y - r * a.sin())
-                };
-                let arc: Vec<Pos2> = (0..=60).map(|i| at(rad, lo + (hi - lo) * i as f32 / 60.0)).collect();
-                clip.add(egui::Shape::line(arc, PathStroke::new(1.5, MID)));
-                let hot: Vec<Pos2> = (0..=20).map(|i| at(rad, lo + (hi - lo) * (0.8 + 0.2 * i as f32 / 20.0))).collect();
-                clip.add(egui::Shape::line(hot, PathStroke::new(3.0, WHITE)));
-                let (step, major_step) = match mode {
-                    VuMode::Gr => (1.0f32, 5.0f32),
-                    _ => (2.0f32, 10.0f32),
-                };
-                let mut v = lo;
-                while v <= hi + 0.001 {
-                    let major = ((v - lo) % major_step).abs() < 0.01 || ((v - lo) % major_step - major_step).abs() < 0.01;
-                    let len = if major { 12.0 } else { 6.0 };
-                    clip.line_segment([at(rad, v), at(rad - len, v)], Stroke::new(if major { 1.5 } else { 1.0 }, if major { WHITE } else { DIM }));
-                    if major {
-                        let txt = if mode == VuMode::Gr { format!("{:.0}", v) } else { format!("{:+.0}", v) };
-                        clip.text(at(rad - 24.0, v), Align2::CENTER_CENTER, txt, mono(10.0), DIM);
-                    }
-                    v += step;
-                }
-                clip.line_segment([at(rad - 98.0, st.needle), at(rad - 3.0, st.needle)], Stroke::new(2.0, WHITE));
+                hw::knob(ui, hwr, setter, &p.gain, k("gain"), accent,
+                    "GAIN: make-up gain after compression, 0-100. About 33 is unity (0 dB), 100 is +20 dB. The output is soft-limited so it never goes over 0 dBFS.");
+                hw::knob(ui, hwr, setter, &p.peak, k("peak"), accent, "PEAK REDUCTION: how much signal feeds the optical cell, 0-100. More = more compression.");
+                let vu = hw::find(lay::VUS, "vu", |x| x.id);
                 let label = match mode {
                     VuMode::Gr => "GAIN REDUCTION",
-                    VuMode::Input => "INPUT  dB",
-                    VuMode::Output => "OUTPUT  dB",
+                    VuMode::Input => "INPUT  (0 VU = -18 dBFS)",
+                    VuMode::Output => "OUTPUT  (0 VU = -18 dBFS)",
                 };
-                // cover over the needle's pivot (like a real meter), the label sits on it
-                let cover = Rect::from_min_max(Pos2::new(vu.left() + 2.0, vu.bottom() - 24.0), Pos2::new(vu.right() - 2.0, vu.bottom() - 2.0));
-                clip.rect_filled(cover, CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 }, Color32::from_rgb(0x0d, 0x0d, 0x0d));
-                clip.hline(cover.x_range(), cover.top(), Stroke::new(1.0, LINE));
-                clip.text(Pos2::new(vu.center().x, cover.center().y), Align2::CENTER_CENTER, label, mono(10.0), DIM);
-
-                // VU DISPLAY selector under the window
-                painter.text(Pos2::new(mp.center().x, mp.top() + 190.0), Align2::CENTER_CENTER, "VU DISPLAY", mono(10.0), DIM);
-                let pw = 64.0;
-                let px = mp.center().x - pw * 1.5 - 4.0;
-                let tips = [
-                    "INPUT: the meter shows the level going into the plugin.",
-                    "GR: the meter shows how many dB of gain reduction is being applied.",
-                    "OUTPUT: the meter shows the level coming out of the plugin.",
-                ];
-                for (i, (name, m)) in [("INPUT", VuMode::Input), ("GR", VuMode::Gr), ("OUTPUT", VuMode::Output)].into_iter().enumerate() {
-                    if pill_tip(ui, Rect::from_min_size(Pos2::new(px + (pw + 4.0) * i as f32, mp.top() + 202.0), Vec2::new(pw, 24.0)), name, mode == m, tips[i]) {
+                hw::text(&painter, hwr, hw::find(lay::TEXTS, "vu_label", |x| x.id), label);
+                hw::needle(&painter, hwr, vu, st.needle, Color32::from_rgb(255, 120, 60));
+                for (id, m, tip) in [
+                    ("vu_in", VuMode::Input, "Meter shows the level going into the plugin."),
+                    ("vu_gr", VuMode::Gr, "Meter shows the gain reduction."),
+                    ("vu_out", VuMode::Output, "Meter shows the level coming out of the plugin."),
+                ] {
+                    if hw::button(ui, hwr, b(id), mode == m, tip) {
                         set_e(setter, &p.vu, m);
                     }
                 }
 
                 // ---- bottom strip
-                let bp = rect(14.0, 338.0, BASE_W - 28.0, 114.0);
-                painter.rect_filled(bp, CornerRadius::same(6), PANEL);
-                painter.rect_stroke(bp, CornerRadius::same(6), Stroke::new(1.0, LINE), StrokeKind::Inside);
-                // ANALOG
+                let limit = p.limit.value();
+                if hw::button(ui, hwr, b("comp"), !limit, "COMPRESS: gentle, musical compression (about 3:1, soft knee). Vocals, bass, mix glue.") {
+                    set_b(setter, &p.limit, false);
+                }
+                if hw::button(ui, hwr, b("limit"), limit, "LIMIT: fast, firm limiting (about 12:1). Catches peaks hard.") {
+                    set_b(setter, &p.limit, true);
+                }
+                let am = p.auto_makeup.value();
+                if hw::button(ui, hwr, b("makeup"), am, "AUTO MAKEUP: adds back part of the level lost to compression.") {
+                    set_b(setter, &p.auto_makeup, !am);
+                }
                 let an = p.analog.value();
-                painter.text(Pos2::new(bp.left() + 14.0, bp.top() + 18.0), Align2::LEFT_CENTER, "ANALOG", mono(10.0), DIM);
-                let atips = [
-                    "ANALOG OFF: clean digital signal path.",
-                    "ANALOG 50 Hz: adds soft tube-style saturation and a faint 50 Hz mains hum (European power).",
-                    "ANALOG 60 Hz: adds soft tube-style saturation and a faint 60 Hz mains hum (US power).",
-                ];
-                for (i, (name, m)) in [("OFF", AnalogMode::Off), ("50 Hz", AnalogMode::Hz50), ("60 Hz", AnalogMode::Hz60)].into_iter().enumerate() {
-                    if pill_tip(ui, Rect::from_min_size(Pos2::new(bp.left() + 14.0, bp.top() + 30.0 + 26.0 * i as f32), Vec2::new(92.0, 22.0)), name, an == m, atips[i]) {
+                for (id, m, tip) in [
+                    ("an_off", AnalogMode::Off, "ANALOG OFF: clean digital signal path."),
+                    ("an_50", AnalogMode::Hz50, "ANALOG 50 Hz: soft tube-style saturation and a faint 50 Hz mains hum (European power)."),
+                    ("an_60", AnalogMode::Hz60, "ANALOG 60 Hz: soft tube-style saturation and a faint 60 Hz mains hum (US power)."),
+                ] {
+                    if hw::button(ui, hwr, b(id), an == m, tip) {
                         set_e(setter, &p.analog, m);
                     }
                 }
-                // live waveform: input (grey), output (white), gain reduction from the top
-                let wr = Rect::from_min_size(Pos2::new(bp.left() + 122.0, bp.top() + 10.0), Vec2::new(310.0, bp.height() - 20.0));
-                painter.rect_filled(wr, CornerRadius::same(4), Color32::from_rgb(0x07, 0x07, 0x07));
-                painter.hline(wr.left()..=wr.right(), wr.center().y, Stroke::new(1.0, LINE));
-                // one continuous filled band per trace (min..max of every column) instead of a line
-                // per column: per-column strokes overlapped unevenly on the pixel grid and drew
-                // stripes / breaks across the waveform. It also scrolls smoothly between blocks.
+                hw::knob(ui, hwr, setter, &p.hf, k("hf"), accent, "HF FOLLOW: makes the detector react more to high frequencies (sibilance, brightness). FLAT = even response.");
+                hw::knob(ui, hwr, setter, &p.mix, k("mix"), accent, "MIX: parallel blend, 0 = dry, 100 = fully compressed.");
+                hw::knob(ui, hwr, setter, &p.trim, k("trim"), accent, "TRIM: final output trim in dB.");
+
+                // live waveform: input (dark), output (light), gain reduction hanging from the top
+                let sc = hw::find(lay::SCREENS, "wave", |x| x.id);
+                let wr = hwr.rect(sc.rect).shrink(2.0);
                 let cols = meters.wave.read();
                 let wpos = meters.wave.written();
                 if wpos != st.wave_pos {
@@ -214,8 +135,8 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                 let frac = (st.wave_t.elapsed().as_secs_f32() / col_s).min(1.0);
                 let nc = cols.len();
                 let w = wr.width() / (nc as f32 - 1.0);
-                let (cy, h) = (wr.center().y, wr.height() * 0.5 - 2.0);
-                let wclip = painter.with_clip_rect(wr.shrink(1.0));
+                let (cy, h) = (wr.center().y + 6.0, wr.height() * 0.5 - 8.0);
+                let wclip = painter.with_clip_rect(wr);
                 let xat = |i: usize| wr.left() + (i as f32 - frac) * w;
                 let yat = |v: f32| cy - v.clamp(-1.0, 1.0) * h;
                 let band = |lo: usize, hi: usize, col: Color32| {
@@ -223,47 +144,36 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                     let uv = egui::epaint::WHITE_UV;
                     for (i, c) in cols.iter().enumerate() {
                         let x = xat(i);
-                        // at least a hairline, so silence still reads as a line
                         let (top, bot) = (yat(c[hi]) - 0.5, yat(c[lo]) + 0.5);
-                        let b = mesh.vertices.len() as u32;
+                        let bb = mesh.vertices.len() as u32;
                         mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(x, top), uv, color: col });
                         mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(x, bot), uv, color: col });
                         if i > 0 {
-                            mesh.indices.extend_from_slice(&[b - 2, b, b + 1, b - 2, b + 1, b - 1]);
+                            mesh.indices.extend_from_slice(&[bb - 2, bb, bb + 1, bb - 2, bb + 1, bb - 1]);
                         }
                     }
                     wclip.add(egui::Shape::mesh(mesh));
                 };
-                band(0, 1, Color32::from_rgb(0x44, 0x44, 0x44));
-                band(2, 3, Color32::from_rgb(0xb0, 0xb0, 0xb0));
-                // gain reduction: hangs from the top, 0..20 dB over the full height
-                let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(xat(i), wr.top() + (c[4].clamp(0.0, 20.0) / 20.0) * wr.height())).collect();
-                wclip.add(egui::Shape::line(gr_pts, PathStroke::new(1.5, WHITE)));
-                wclip.text(Pos2::new(wr.left() + 6.0, wr.bottom() - 8.0), Align2::LEFT_CENTER, "WAVE  in / out  ·  GR", mono(9.0), DIM);
-                painter.rect_stroke(wr, CornerRadius::same(4), Stroke::new(1.0, LINE), StrokeKind::Inside);
-                let ix = bp.left() + 442.0;
-                let cw = (bp.right() - 6.0 - ix) / 3.0;
-                let cell = |i: usize| Rect::from_min_size(Pos2::new(ix + cw * i as f32, bp.top() + 6.0), Vec2::new(cw, bp.height() - 12.0));
-                knob(ui, setter, &p.hf, "HI FREQ", cell(0), "Makes the detector react more to high frequencies (sibilance, brightness). FLAT = even response.", false);
-                knob(ui, setter, &p.mix, "MIX", cell(1), "Parallel blend: 0 = dry, 100 = fully compressed.", false);
-                knob(ui, setter, &p.trim, "TRIM", cell(2), "Final output trim in dB.", true);
+                band(0, 1, Color32::from_rgb(0x3a, 0x3c, 0x40));
+                band(2, 3, Color32::from_rgb(0x9a, 0x9c, 0xa2));
+                let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(xat(i), wr.top() + 2.0 + (c[4].clamp(0.0, 20.0) / 20.0) * (wr.height() - 4.0))).collect();
+                wclip.add(egui::Shape::line(gr_pts, PathStroke::new(1.6_f32, accent)));
+                hw::glass(&painter, hwr, sc);
 
                 // resize grip (keeps proportions)
                 let grip = Rect::from_min_size(full.max - Vec2::splat(22.0), Vec2::splat(22.0));
                 let gr_resp = ui.interact(grip, egui::Id::new("opto_resize_grip"), Sense::drag()).on_hover_text("Drag to resize");
                 if gr_resp.dragged() {
                     if let Some(pos) = gr_resp.interact_pointer_pos() {
-                        // host units: pixels on Windows / Linux, logical points on macOS (egui's scale there is Retina x our UI scale)
                         let ppp = if cfg!(target_os = "macos") { size_state.size().0 as f32 / BASE_W } else { ctx.pixels_per_point() };
                         let w = ((pos.x - full.min.x + 11.0) * ppp).clamp(560.0, 2400.0);
                         size_state.set_requested_size((w.round() as u32, (w * BASE_H / BASE_W).round() as u32));
                     }
                 }
-                let gc = if gr_resp.hovered() || gr_resp.dragged() { WHITE } else { DIM };
-                for k in [6.0f32, 11.0, 16.0] {
-                    painter.line_segment([Pos2::new(full.max.x - 3.0, full.max.y - k), Pos2::new(full.max.x - k, full.max.y - 3.0)], Stroke::new(1.0, gc));
+                let gc = if gr_resp.hovered() || gr_resp.dragged() { Color32::from_white_alpha(140) } else { Color32::from_white_alpha(50) };
+                for kk in [6.0f32, 11.0, 16.0] {
+                    painter.line_segment([Pos2::new(full.max.x - 3.0, full.max.y - kk), Pos2::new(full.max.x - kk, full.max.y - 3.0)], Stroke::new(1.0_f32, gc));
                 }
-                let _ = (UiBuilder::new(), Ui::id);
             });
         },
     )

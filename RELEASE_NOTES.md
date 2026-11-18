@@ -1,3 +1,8 @@
+# NyashkOpto v1.0.6
+
+- Новий дизайн: сучасне аналогове залізо. Корпус, ручки, кнопки й екрани відрендерені як справжні фізичні об'єкти: точені алюмінієві ручки з рифленою стінкою, тіні в три шари, анодований метал з подряпинами, пилом і потертими краями, кнопки з підсвіткою, LED-дуги навколо ручок, скло на екранах.
+- Ручки: тягни вгору / вниз (Shift — точно), колесо миші, подвійний клік — значення за замовчуванням, правий клік — ввести число. Значення показується при наведенні.
+
 # NyashkOpto v1.0.5
 
 - **No colouring of hot signals:** the output safety ceiling started at -0.45 dBFS and softly squashed any peak above it, even with Peak Reduction at 0. It now starts at -0.04 dBFS, so anything that already fits passes unchanged.
