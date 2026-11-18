@@ -17,7 +17,7 @@ NyashkOpto is an LA-2A style optical compressor VST3 plugin.
 
 ## 🎛 NyashkOpto — optical compressor
 
-A model of an optical (opto-cell) compressor in the spirit of the LA-2A, in the same design as NyashkTune. Attack is program-dependent, and release is two-stage with memory.
+A model of an optical (opto-cell) compressor in the spirit of the LA-2A, with a modern analog faceplate (machined knobs, backlit VU, lit buttons). Attack is program-dependent, and release is two-stage with memory.
 
 <p align="center"><img src="docs/img/nyashkopto.png" alt="NyashkOpto" width="720"></p>
 
