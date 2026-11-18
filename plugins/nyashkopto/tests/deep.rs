@@ -184,3 +184,19 @@ fn hot_input_is_not_coloured_without_compression() {
     println!("max deviation at -0.1 dBFS: {err:.5}");
     assert!(err < 2e-3, "a -0.1 dBFS signal is changed by {err}");
 }
+
+#[test]
+fn recovers_after_nan_or_inf_from_the_host() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut a = Comp::new(48000.0);
+        let p = Params { analog: 1, peak_reduction: 80.0, hf_follow: 1.0, mix: 0.5, ..par() };
+        for n in 0..96000 {
+            let v = if (100..110).contains(&n) { bad } else { 0.3 * (n as f32 * 0.05).sin() };
+            let mut x = [v, v];
+            a.process(&p, &mut x, 2);
+            if n > 48000 {
+                assert!(x[0].is_finite() && x[1].is_finite(), "opto {bad}: still broken at n {n}: {x:?}");
+            }
+        }
+    }
+}
