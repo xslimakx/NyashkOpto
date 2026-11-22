@@ -125,7 +125,15 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                 // live waveform: input (dark), output (light), gain reduction hanging from the top
                 let sc = hw::find(lay::SCREENS, "wave", |x| x.id);
                 let wr = hwr.rect(sc.rect).shrink(2.0);
-                let cols = meters.wave.read();
+                let raw = meters.wave.read();
+                // a light [1 2 1] blur along time: smooth outlines instead of jagged columns
+                let cols: Vec<[f32; 5]> = (0..raw.len())
+                    .map(|i| {
+                        let a = raw[i.saturating_sub(1)];
+                        let b = raw[(i + 1).min(raw.len() - 1)];
+                        std::array::from_fn(|k| (a[k] + 2.0 * raw[i][k] + b[k]) * 0.25)
+                    })
+                    .collect();
                 let wpos = meters.wave.written();
                 if wpos != st.wave_pos {
                     st.wave_pos = wpos;
