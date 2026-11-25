@@ -187,8 +187,10 @@ impl Plugin for NyashkOpto {
         editor::create(self.params.clone(), self.meters.clone())
     }
 
-    fn initialize(&mut self, _layout: &AudioIOLayout, config: &BufferConfig, _context: &mut impl InitContext<Self>) -> bool {
-        self.comp = Some(dsp::Comp::new(config.sample_rate));
+    fn initialize(&mut self, _layout: &AudioIOLayout, config: &BufferConfig, context: &mut impl InitContext<Self>) -> bool {
+        let c = dsp::Comp::new(config.sample_rate);
+        context.set_latency_samples(c.latency() as u32);
+        self.comp = Some(c);
         self.fs = config.sample_rate;
         self.per_col = ((config.sample_rate * WAVE_SECONDS) as usize / WAVE_COLS).max(1);
         true

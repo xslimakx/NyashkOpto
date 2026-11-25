@@ -46,11 +46,28 @@ pub struct Comp {
     ax: [f32; 2],
     // bypass crossfade 0 = processed, 1 = bypassed
     byp: f32,
+    /// instant-attack peak envelope for the onset guard
+    pk: f32,
+    /// look-ahead delay line for the audio (the detector hears it this much earlier)
+    la: [Vec<f32>; 2],
+    la_pos: usize,
+    /// onset guard on (always in the plugin; switchable for tests)
+    pub guard: bool,
 }
 
 impl Comp {
     pub fn new(fs: f32) -> Self {
-        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2], ax: [0.0; 2], byp: 0.0 }
+        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2], ax: [0.0; 2], byp: 0.0, pk: 0.0, la: [vec![0.0; Self::la_len(fs)], vec![0.0; Self::la_len(fs)]], la_pos: 0, guard: true }
+    }
+
+    /// look-ahead: 2 ms
+    fn la_len(fs: f32) -> usize {
+        ((fs * 0.002).round() as usize).max(1)
+    }
+
+    /// latency in samples (the look-ahead)
+    pub fn latency(&self) -> usize {
+        self.la[0].len()
     }
 
     pub fn reset(&mut self) {
@@ -103,6 +120,32 @@ impl Comp {
             (1.0 - 1.0 / ratio) * t * t / (2.0 * knee)
         };
 
+        // ---- onset guard: a loud entry after quiet would pass the slow opto cell almost untouched
+        // for its first 10-20 ms. An instant peak envelope says where the gain is heading; the cell
+        // is pulled there at once, allowing `allow` dB above it, so steady material (where the
+        // cell has already settled) is not touched and the opto character stays.
+        let ipk = dry.iter().take(n).fold(0.0f32, |m, v| m.max(v.abs()));
+        let pk_rel = (-1.0 / (0.015 * self.fs)).exp();
+        self.pk = ipk.max(self.pk * pk_rel);
+        let pk_db = 20.0 * (self.pk + 1e-9).log10();
+        let over_pk = pk_db - thr;
+        let target_pk = if over_pk <= -knee * 0.5 {
+            0.0
+        } else if over_pk >= knee * 0.5 {
+            over_pk * (1.0 - 1.0 / ratio)
+        } else {
+            let t = over_pk + knee * 0.5;
+            (1.0 - 1.0 / ratio) * t * t / (2.0 * knee)
+        };
+        let allow = if p.limit { 1.0 } else { 2.0 };
+        let guard = if self.guard { target_pk - allow } else { -100.0 };
+        if guard > self.g_fast {
+            self.g_fast += (guard - self.g_fast) * self.coef(0.0004);
+        }
+        if guard > self.g_slow {
+            self.g_slow += (guard - self.g_slow) * self.coef(0.0004);
+        }
+
         // ---- optical cell
         let att_tau = (0.010 / (1.0 + (target - self.g_fast).max(0.0) / 6.0)).max(0.0015);
         if target > self.g_fast {
@@ -128,6 +171,14 @@ impl Comp {
         let makeup = 10f32.powf((p.gain_db + auto_db + p.trim_db) / 20.0);
         let g = 10f32.powf(-gr / 20.0) * makeup;
         self.smooth_gain += (g - self.smooth_gain) * 0.05;
+        // the audio itself comes out of the look-ahead line: the gain above already knows it
+        let mut del = [0.0f32; 2];
+        let ll = self.la[0].len();
+        for c in 0..n {
+            del[c] = self.la[c][self.la_pos];
+            self.la[c][self.la_pos] = dry[c];
+        }
+        self.la_pos = (self.la_pos + 1) % ll;
         let mut pk = 0.0f32;
         // click-free bypass: about 5 ms crossfade
         self.byp += ((p.bypass as u8 as f32) - self.byp) * 0.004;
@@ -135,7 +186,7 @@ impl Comp {
             self.byp = p.bypass as u8 as f32;
         }
         for c in 0..n {
-            let mut y = dry[c] * self.smooth_gain;
+            let mut y = del[c] * self.smooth_gain;
             if p.analog > 0 {
                 // gentle tube / transformer style soft saturation (unity at small signals)
                 y = adaa_tanh(&mut self.ax[c], y);
@@ -159,9 +210,9 @@ impl Comp {
             if ya > 0.995 {
                 y = y.signum() * (0.995 + 0.0049 * ((ya - 0.995) / 0.0049).tanh());
             }
-            let out = dry[c] * (1.0 - p.mix) + y * p.mix;
+            let out = del[c] * (1.0 - p.mix) + y * p.mix;
             pk = pk.max(out.abs());
-            x[c] = dry[c] * self.byp + out * (1.0 - self.byp);
+            x[c] = del[c] * self.byp + out * (1.0 - self.byp);
         }
         let rel = (-1.0 / (0.3 * self.fs)).exp();
         self.out_peak = pk.max(self.out_peak * rel);
@@ -173,6 +224,66 @@ impl Comp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    /// the onset guard leaves settled material alone (mean gain reduction within 0.3 dB)
+    fn onset_guard_keeps_the_opto_character() {
+        let fs = 48000.0f32;
+        for pr in [40.0f32, 70.0] {
+            let mut res = vec![];
+            for guard in [false, true] {
+                let mut c = Comp::new(fs);
+                c.guard = guard;
+                let p = Params { peak_reduction: pr, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 };
+                let mut seed = 7u32;
+                let (mut gr, mut cnt) = (0.0f64, 0);
+                for i in 0..(fs * 6.0) as usize {
+                    let t = i as f32 / fs;
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let nz = (seed >> 8) as f32 / 8388608.0 - 1.0;
+                    // syllables at 5 Hz, a voiced tone + breath noise, level wandering slowly
+                    let env = (0.5 + 0.5 * (2.0 * 3.14159 * 5.0 * t).sin()).powf(1.5) * (0.6 + 0.4 * (2.0 * 3.14159 * 0.3 * t).sin());
+                    let s = env * (0.4 * (2.0 * 3.14159 * 180.0 * t).sin() + 0.15 * (2.0 * 3.14159 * 900.0 * t).sin() + 0.08 * nz);
+                    let mut x = [s, s];
+                    c.process(&p, &mut x, 2);
+                    if t > 1.0 {
+                        gr += c.gr_db as f64;
+                        cnt += 1;
+                    }
+                }
+                res.push(gr / cnt as f64);
+            }
+            eprintln!("PR {pr}: mean GR without guard {:.2} dB, with guard {:.2} dB", res[0], res[1]);
+            assert!((res[1] - res[0]).abs() < 0.3, "PR {pr}: {res:?}");
+        }
+    }
+
+    #[test]
+    /// a loud entry after silence: the first 20 ms are no more than 3 dB over the settled level
+    /// (was 5-21 dB before the onset guard)
+    fn loud_entry_after_silence_has_no_burst() {
+        let fs = 48000.0f32;
+        for pr in [40.0f32, 60.0, 80.0] {
+            for limit in [false, true] {
+                let mut c = Comp::new(fs);
+                let p = Params { peak_reduction: pr, gain_db: 0.0, limit, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 };
+                let n = (fs * 1.5) as usize;
+                let on = (fs * 0.5) as usize;
+                let (mut first, mut steady) = (0.0f32, 0.0f32);
+                for i in 0..n {
+                    let t = i as f32 / fs;
+                    let s = if i >= on { 0.5 * ((2.0 * 3.14159 * 220.0 * t).sin() * 0.7 + (2.0 * 3.14159 * 440.0 * t).sin() * 0.3) } else { 0.0 };
+                    let mut x = [s, s];
+                    c.process(&p, &mut x, 2);
+                    let o = on + c.latency();
+                    if i >= o && i < o + (fs * 0.02) as usize { first = first.max(x[0].abs()); }
+                    if i > on + (fs * 0.6) as usize { steady = steady.max(x[0].abs()); }
+                }
+                let over = 20.0 * (first / steady).log10();
+                eprintln!("PR {pr} limit {limit}: first 20 ms peak {:.1} dBFS, steady {:.1} dBFS, overshoot {over:.1} dB", 20.0 * first.log10(), 20.0 * steady.log10());
+                assert!(over < 3.0, "PR {pr} limit {limit}: {over}");
+            }
+        }
+    }
     fn par() -> Params {
         Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 }
     }

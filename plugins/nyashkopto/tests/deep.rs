@@ -65,14 +65,19 @@ fn attack_fast_release_two_stage() {
     // 2 ms of a 500 Hz tone = one period), not on the smoothed meter value
     let mut pk = 0.0f32;
     let mut ipk = 0.0f32;
+    // the output is the input delayed by the look-ahead: compare like with like
+    let lat = c.latency();
+    let mut hist = std::collections::VecDeque::from(vec![0.0f32; lat]);
     for i in 0..(fs * 9.0) as usize {
         let t = i as f32 / fs;
         let a = if (1.0..3.0).contains(&t) { 0.7 } else { 0.01 };
         let s = a * (2.0 * PI * 500.0 * t).sin();
         let mut x = [s, s];
         c.process(&p, &mut x, 2);
+        hist.push_back(s);
+        let sd = hist.pop_front().unwrap();
         pk = pk.max(x[0].abs());
-        ipk = ipk.max(s.abs());
+        ipk = ipk.max(sd.abs());
         if i % 96 == 95 {
             grs.push((t, db(ipk) - db(pk)));
             pk = 0.0;
