@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 use crate::hw::*;
 pub const W: f32 = 800.00;
-pub const H: f32 = 470.00;
+pub const H: f32 = 610.00;
 
 pub const ASSETS: &[(&str, &[u8])] = &[
     ("bg", include_bytes!("../assets/hw/bg.jpg")),
@@ -19,6 +19,10 @@ pub const ASSETS: &[(&str, &[u8])] = &[
     ("btn_an_50", include_bytes!("../assets/hw/btn_an_50.png")),
     ("btn_an_60", include_bytes!("../assets/hw/btn_an_60.png")),
     ("glass_wave", include_bytes!("../assets/hw/glass_wave.png")),
+    ("btn_on_vin", include_bytes!("../assets/hw/btn_on_vin.png")),
+    ("btn_on_soft", include_bytes!("../assets/hw/btn_on_soft.png")),
+    ("btn_on_firm", include_bytes!("../assets/hw/btn_on_firm.png")),
+    ("glass_env", include_bytes!("../assets/hw/glass_env.png")),
 ];
 
 pub const ACCENT: [u8; 3] = [255,166,64];
@@ -28,6 +32,9 @@ pub const KNOBS: &[KnobL] = &[
     KnobL { id: "hf", c: (598.00, 380.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: false },
     KnobL { id: "mix", c: (668.00, 380.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: false },
     KnobL { id: "trim", c: (738.00, 380.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: true },
+    KnobL { id: "attack", c: (598.00, 520.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: false },
+    KnobL { id: "release", c: (668.00, 520.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: false },
+    KnobL { id: "schpf", c: (738.00, 520.00), r: 22.00, ptr0: 5.54, ptr1: 15.15, ptr_w: 1.60, ptr_col: [30,30,32,235], engraved: true, skirt: (0.00, 0.00), led_r: 26.00, led_n: 15, bip: false },
 ];
 pub const BUTTONS: &[BtnL] = &[
     BtnL { id: "power", rect: (696.00, 21.00, 64.00, 22.00), tex: "btn_power", tex_size: (64.00, 22.00), glow: [255,166,64] },
@@ -40,9 +47,13 @@ pub const BUTTONS: &[BtnL] = &[
     BtnL { id: "an_off", rect: (198.00, 355.00, 64.00, 22.00), tex: "btn_an_off", tex_size: (64.00, 22.00), glow: [255,166,64] },
     BtnL { id: "an_50", rect: (197.50, 385.00, 31.00, 22.00), tex: "btn_an_50", tex_size: (31.00, 22.00), glow: [255,166,64] },
     BtnL { id: "an_60", rect: (231.50, 385.00, 31.00, 22.00), tex: "btn_an_60", tex_size: (31.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "on_vin", rect: (40.00, 501.00, 64.00, 22.00), tex: "btn_on_vin", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "on_soft", rect: (110.00, 501.00, 64.00, 22.00), tex: "btn_on_soft", tex_size: (64.00, 22.00), glow: [255,166,64] },
+    BtnL { id: "on_firm", rect: (180.00, 501.00, 64.00, 22.00), tex: "btn_on_firm", tex_size: (64.00, 22.00), glow: [255,166,64] },
 ];
 pub const SCREENS: &[ScreenL] = &[
     ScreenL { id: "wave", rect: (290.00, 344.00, 250.00, 90.00), glass: "glass_wave" },
+    ScreenL { id: "env", rect: (290.00, 484.00, 250.00, 90.00), glass: "glass_env" },
 ];
 pub const VUS: &[VuL] = &[
     VuL { id: "vu", rect: (280.00, 84.00, 240.00, 172.00), pivot: (400.00, 251.00), r: 96.00, glass: "glass_vu" },

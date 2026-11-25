@@ -18,7 +18,7 @@ fn rms_db(x: &[f32]) -> f32 { db((x.iter().map(|v| v * v).sum::<f32>() / x.len()
 
 fn main() {
     let fs = 48000.0;
-    let base = Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 };
+    let base = Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0, ..Params::default() };
     // 1. transparency at peak reduction 0
     let (o, g) = run(&base, fs, 1.0, |_| 0.5);
     println!("PR=0, -6 dBFS sine: out rms {:.2} dB (in {:.2}), GR {:.2} dB", rms_db(&o[24000..]), 20.0 * (0.5f32 / 2f32.sqrt()).log10(), g[47999]);

@@ -3,7 +3,7 @@ use nyashkopto::dsp::{Comp, Params};
 use std::f32::consts::PI;
 
 fn par() -> Params {
-    Params { peak_reduction: 50.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 }
+    Params { peak_reduction: 50.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0, ..Params::default() }
 }
 
 fn db(x: f32) -> f32 {

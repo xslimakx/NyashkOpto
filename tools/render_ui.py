@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from hwrender import *
 
 ACC = (255, 166, 64)
-p = Panel(800, 470, (0.14, 0.145, 0.155), ACC, (232, 230, 224, 235), (150, 150, 148, 225))
+p = Panel(800, 610, (0.14, 0.145, 0.155), ACC, (232, 230, 224, 235), (150, 150, 148, 225))
 header(p, 'OPTO', 'OPTICAL LEVELING AMPLIFIER')
 p.button('power', 728, 32, 64, 22, 'POWER')
 labels = [str(v) for v in range(0, 101, 10)]
@@ -28,4 +28,14 @@ p.screen('wave', 290, 344, 250, 90)
 p.text('WAVE  ·  GR', 415, 444, 7.2, None, True, sp=1)
 for id, x, lbl in [('hf', 598, 'HF FOLLOW'), ('mix', 668, 'MIX'), ('trim', 738, 'TRIM')]:
     p.knob(id, x, 380, 44, 'alu', label=lbl, label_dy=46, led=dict(r=26, n=15), bip=(id == 'trim'))
+# ---- timing strip: onset guard, attack / release, side-chain high-pass
+p.inset(30, 466, 770, 592)
+p.text('ONSET', 142, 484, 7, None, True, sp=1)
+for id, x, t in [('on_vin', 72, 'VINTAGE'), ('on_soft', 142, 'SOFT'), ('on_firm', 212, 'FIRM')]:
+    p.button(id, x, 512, 64, 22, t)
+p.text('HOW LOUD ENTRIES ARE CAUGHT', 142, 546, 6.5, None, False, sp=1)
+p.screen('env', 290, 484, 250, 90)
+p.text('ENVELOPE', 415, 584, 7.2, None, True, sp=1)
+for id, x, lbl in [('attack', 598, 'ATTACK'), ('release', 668, 'RELEASE'), ('schpf', 738, 'SC HPF')]:
+    p.knob(id, x, 520, 44, 'alu', label=lbl, label_dy=46, led=dict(r=26, n=15))
 p.export(os.path.join(os.path.dirname(__file__), '..'), 'plugins/nyashkopto')

@@ -11,10 +11,15 @@ use std::time::{Duration, Instant};
 use crate::hw::{self, Hw};
 use crate::hw_layout as lay;
 use crate::ui::{set_b, set_e};
-use crate::{AnalogMode, Meters, OptoParams, VuMode};
+use crate::{AnalogMode, Meters, OnsetMode, OptoParams, VuMode};
 
 const BASE_W: f32 = lay::W;
 const BASE_H: f32 = lay::H;
+
+/// envelope preview: 0.4 s, the loud entry at 40 ms
+const ENV_COLS: usize = 160;
+const ENV_SECS: f32 = 0.4;
+const ENV_ON: f32 = 0.04;
 
 struct Gui {
     hw: Option<Hw>,
@@ -22,6 +27,44 @@ struct Gui {
     /// smooth scrolling of the waveform between audio blocks
     wave_pos: usize,
     wave_t: Instant,
+    /// the envelope preview (a tone burst through the real compressor) and the settings it is for
+    env: Vec<[f32; 2]>,
+    env_key: [f32; 6],
+}
+
+/// Runs a tone burst through the compressor with the current settings: per column the input and
+/// output peak. Cheap (a low sample rate), redone only when a setting changes.
+fn envelope(p: &crate::dsp::Params) -> Vec<[f32; 2]> {
+    const FS: f32 = 16000.0;
+    const COLS: usize = ENV_COLS;
+    let mut c = crate::dsp::Comp::new(FS);
+    let lat = c.latency();
+    let per = (FS * ENV_SECS) as usize / COLS;
+    let total = per * COLS;
+    let mut q = *p;
+    q.gain_db = 0.0;
+    q.auto_makeup = false;
+    q.trim_db = 0.0;
+    q.mix = 1.0;
+    q.bypass = false;
+    q.analog = 0;
+    let mut out = vec![[0.0f32; 2]; COLS];
+    for i in 0..total + lat {
+        let t = i as f32 / FS;
+        // silence, then a loud entry (a held tone) at ENV_ON
+        let s = if t >= ENV_ON { 0.7 * (2.0 * std::f32::consts::PI * 400.0 * t).sin() } else { 0.0 };
+        if i < total {
+            let k = i / per;
+            out[k][0] = out[k][0].max(s.abs());
+        }
+        let mut x = [s, s];
+        c.process(&q, &mut x, 2);
+        if i >= lat {
+            let k = ((i - lat) / per).min(COLS - 1);
+            out[k][1] = out[k][1].max(x[0].abs());
+        }
+    }
+    out
 }
 
 fn k(id: &str) -> &'static hw::KnobL {
@@ -36,7 +79,7 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
     let size_state = editor_state.clone();
     create_egui_editor(
         editor_state,
-        Gui { hw: None, needle: 0.0, wave_pos: 0, wave_t: Instant::now() },
+        Gui { hw: None, needle: 0.0, wave_pos: 0, wave_t: Instant::now(), env: Vec::new(), env_key: [-1.0; 6] },
         |ctx, st| {
             // a new window gets a new egui context: textures must be loaded again
             st.hw = None;
@@ -47,6 +90,14 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
         },
         move |ctx, setter, st| {
             ctx.request_repaint_after(Duration::from_millis(33));
+            // a window saved by an older version (another height): restore the proportions
+            {
+                let (w, h) = size_state.size();
+                let want = (w as f32 * BASE_H / BASE_W).round() as u32;
+                if h.abs_diff(want) > 2 {
+                    size_state.set_requested_size((w, want));
+                }
+            }
             if st.hw.is_none() {
                 st.hw = Some(Hw::load(ctx, lay::ASSETS));
             }
@@ -167,6 +218,92 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
                 let gr_pts: Vec<Pos2> = cols.iter().enumerate().map(|(i, c)| Pos2::new(xat(i), wr.top() + 2.0 + (c[4].clamp(0.0, 20.0) / 20.0) * (wr.height() - 4.0))).collect();
                 wclip.add(egui::Shape::line(gr_pts, PathStroke::new(1.6_f32, accent)));
                 hw::glass(&painter, hwr, sc);
+
+                // ---- timing strip: onset guard, attack, release, side-chain high-pass
+                let on = p.onset.value();
+                for (id, m, tip) in [
+                    ("on_vin", OnsetMode::Vintage, "ONSET VINTAGE: like the hardware. A loud entry after quiet slips through for the first 10-20 ms before the cell grabs it (punchy, but can sound harsh on vocals)."),
+                    ("on_soft", OnsetMode::Soft, "ONSET SOFT: keeps some of the punch. The first peak of a loud entry stays within about 6 dB (3 dB in LIMIT) of the settled level."),
+                    ("on_firm", OnsetMode::Firm, "ONSET FIRM: no burst. The first peak stays within about 2 dB (1 dB in LIMIT); settled material sounds the same as VINTAGE."),
+                ] {
+                    if hw::button(ui, hwr, b(id), on == m, tip) {
+                        set_e(setter, &p.onset, m);
+                    }
+                }
+                hw::knob(ui, hwr, setter, &p.attack, k("attack"), accent, "ATTACK: how fast the cell clamps down. 10 ms is the classic opto timing (still program-dependent); lower = faster, higher = more punch through.");
+                hw::knob(ui, hwr, setter, &p.release, k("release"), accent, "RELEASE: speed of both release stages. 60 ms is the classic opto timing (fast part 60 ms, slow part 0.5-5 s); lower = faster recovery, higher = smoother, slower.");
+                hw::knob(ui, hwr, setter, &p.sc_hpf, k("schpf"), accent, "SC HPF: high-pass in the detector, OFF or 20-400 Hz. The low end stops pumping the compressor; the audio itself is not filtered.");
+
+                // envelope preview: a loud tone burst through the compressor with these settings
+                let dp = crate::dsp::Params {
+                    peak_reduction: p.peak.value(),
+                    gain_db: 0.0,
+                    limit: p.limit.value(),
+                    hf_follow: p.hf.value() / 100.0,
+                    analog: 0,
+                    mix: 1.0,
+                    bypass: false,
+                    auto_makeup: false,
+                    trim_db: 0.0,
+                    onset: match on {
+                        OnsetMode::Vintage => 0,
+                        OnsetMode::Soft => 1,
+                        OnsetMode::Firm => 2,
+                    },
+                    attack: p.attack.value() / 10.0,
+                    release: p.release.value() / 60.0,
+                    sc_hpf: 0.0,
+                };
+                let key = [dp.peak_reduction, dp.limit as u8 as f32, dp.hf_follow, dp.onset as f32, dp.attack, dp.release];
+                if key != st.env_key {
+                    st.env_key = key;
+                    st.env = envelope(&dp);
+                }
+                let es = hw::find(lay::SCREENS, "env", |x| x.id);
+                let er = hwr.rect(es.rect).shrink(2.0);
+                let eclip = painter.with_clip_rect(er);
+                if !st.env.is_empty() {
+                    // levels in dB, -30..0 dBFS, input dim, output light; the dashed line is the
+                    // settled output level, so the burst over it is the onset overshoot
+                    let ne = st.env.len();
+                    let top = er.top() + 18.0;
+                    let ydb = |v: f32| {
+                        let d = (20.0 * (v + 1e-6).log10()).clamp(-30.0, 0.0);
+                        top + (-d / 30.0) * (er.bottom() - 4.0 - top)
+                    };
+                    let xat = |i: usize| er.left() + (i as f32 + 0.5) * er.width() / ne as f32;
+                    let on = (ENV_ON / ENV_SECS * ne as f32) as usize;
+                    let ln = |k: usize| -> Vec<Pos2> { st.env.iter().enumerate().skip(on).map(|(i, c)| Pos2::new(xat(i), ydb(c[k]))).collect() };
+                    let mut fill = egui::Mesh::default();
+                    for (i, c) in st.env.iter().enumerate().skip(on) {
+                        let bb = fill.vertices.len() as u32;
+                        let col = Color32::from_rgba_unmultiplied(0xb4, 0xb6, 0xbc, 40);
+                        fill.colored_vertex(Pos2::new(xat(i), ydb(c[1])), col);
+                        fill.colored_vertex(Pos2::new(xat(i), er.bottom()), col);
+                        if i > on {
+                            fill.add_triangle(bb - 2, bb, bb + 1);
+                            fill.add_triangle(bb - 2, bb + 1, bb - 1);
+                        }
+                    }
+                    eclip.add(egui::Shape::mesh(fill));
+                    eclip.add(egui::Shape::line(ln(0), PathStroke::new(1.2_f32, Color32::from_rgb(0x5a, 0x5c, 0x62))));
+                    eclip.add(egui::Shape::line(ln(1), PathStroke::new(1.6_f32, Color32::from_rgb(0xe4, 0xe2, 0xdc))));
+                    // settled: the output 250-350 ms after the entry
+                    let a0 = ((ENV_ON + 0.25) / ENV_SECS * ne as f32) as usize;
+                    let settle = st.env[a0..ne].iter().map(|c| c[1]).sum::<f32>() / (ne - a0) as f32;
+                    let sy = ydb(settle);
+                    let mut x = er.left();
+                    while x < er.right() {
+                        eclip.line_segment([Pos2::new(x, sy), Pos2::new((x + 4.0).min(er.right()), sy)], Stroke::new(1.0_f32, accent));
+                        x += 7.0;
+                    }
+                    let e20 = on + (0.02 / ENV_SECS * ne as f32) as usize;
+                    let first = st.env[on..e20].iter().fold(0.0f32, |m, c| m.max(c[1]));
+                    let over = (20.0 * ((first + 1e-6) / (settle + 1e-6)).log10()).max(0.0);
+                    eclip.text(Pos2::new(er.left() + 6.0, er.top() + 4.0), egui::Align2::LEFT_TOP, format!("ATT {:.1} ms   REL {:.0} ms", p.attack.value(), p.release.value()), egui::FontId::proportional(9.0), Color32::from_rgb(200, 196, 188));
+                    eclip.text(Pos2::new(er.right() - 6.0, er.top() + 4.0), egui::Align2::RIGHT_TOP, format!("burst +{over:.1} dB"), egui::FontId::proportional(9.0), if over > 3.0 { accent } else { Color32::from_rgb(200, 196, 188) });
+                }
+                hw::glass(&painter, hwr, es);
 
                 // resize grip (keeps proportions)
                 let grip = Rect::from_min_size(full.max - Vec2::splat(22.0), Vec2::splat(22.0));

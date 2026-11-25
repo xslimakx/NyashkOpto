@@ -31,6 +31,10 @@ A model of an optical (opto-cell) compressor in the spirit of the LA-2A, with a 
 | **Mix** | Parallel compression (dry/wet) |
 | **Auto Makeup**, **Trim** | Automatic level compensation and output trim |
 | **VU: INPUT / GR / OUTPUT** | What the VU meter shows: input, gain reduction or output |
+| **ONSET: VINTAGE / SOFT / FIRM** | How a loud entry after quiet is caught: VINTAGE lets the first 10-20 ms through like the hardware, SOFT keeps some punch, FIRM gives no burst |
+| **Attack**, **Release** | Scale the classic opto timing (10 ms attack, 60 ms + 0.5-5 s release) |
+| **SC HPF** | High-pass in the detector (OFF, 20-400 Hz) so the low end doesn't pump the compressor |
+| **Envelope** screen | A loud tone burst through the compressor with your settings: shows the onset burst in dB |
 
 ---
 

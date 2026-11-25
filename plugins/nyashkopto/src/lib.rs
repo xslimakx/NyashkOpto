@@ -96,6 +96,19 @@ pub enum VuMode {
     Output,
 }
 
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum OnsetMode {
+    /// no guard: a loud entry slips through for 10-20 ms, like the hardware
+    #[name = "VINTAGE"]
+    Vintage,
+    /// the first peak is held to about 6 dB (3 dB in LIMIT) over the settled level
+    #[name = "SOFT"]
+    Soft,
+    /// the first peak is held to about 2 dB (1 dB in LIMIT)
+    #[name = "FIRM"]
+    Firm,
+}
+
 #[derive(Params)]
 pub struct OptoParams {
     #[persist = "editor-state"]
@@ -121,13 +134,21 @@ pub struct OptoParams {
     pub auto_makeup: BoolParam,
     #[id = "trim"]
     pub trim: FloatParam,
+    #[id = "onset"]
+    pub onset: EnumParam<OnsetMode>,
+    #[id = "attack"]
+    pub attack: FloatParam,
+    #[id = "release"]
+    pub release: FloatParam,
+    #[id = "schpf"]
+    pub sc_hpf: FloatParam,
 }
 
 impl Default for OptoParams {
     fn default() -> Self {
         let smooth = || SmoothingStyle::Linear(30.0);
         Self {
-            editor_state: EguiState::from_size(800, 470),
+            editor_state: EguiState::from_size(800, 610),
             bypass: BoolParam::new("Bypass", false).make_bypass(),
             peak: FloatParam::new("Peak Reduction", 40.0, FloatRange::Linear { min: 0.0, max: 100.0 }).with_step_size(0.1).with_smoother(smooth()),
             // 0..100 like the hardware-style knob; 33 = unity (like the original), 100 = +20 dB, 0 = -10 dB
@@ -145,6 +166,20 @@ impl Default for OptoParams {
             vu: EnumParam::new("VU Display", VuMode::Gr),
             auto_makeup: BoolParam::new("Auto Makeup", false),
             trim: FloatParam::new("Trim", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 }).with_unit(" dB").with_step_size(0.1).with_smoother(smooth()),
+            onset: EnumParam::new("Onset", OnsetMode::Firm),
+            // the classic opto timing is the default (10 ms / 60 ms); the knobs scale it
+            attack: FloatParam::new("Attack", 10.0, FloatRange::Skewed { min: 2.5, max: 40.0, factor: FloatRange::skew_factor(-1.0) })
+                .with_unit(" ms")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            release: FloatParam::new("Release", 60.0, FloatRange::Skewed { min: 15.0, max: 240.0, factor: FloatRange::skew_factor(-1.0) })
+                .with_unit(" ms")
+                .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            sc_hpf: FloatParam::new("SC High Pass", 20.0, FloatRange::Skewed { min: 20.0, max: 400.0, factor: FloatRange::skew_factor(-1.0) })
+                .with_value_to_string(Arc::new(|v| if v < 20.5 { "OFF".to_string() } else { format!("{v:.0} Hz") }))
+                .with_string_to_value(Arc::new(|s| {
+                    let t = s.trim().trim_end_matches("Hz").trim();
+                    if t.eq_ignore_ascii_case("off") { Some(20.0) } else { t.parse().ok() }
+                })),
         }
     }
 }
@@ -221,6 +256,14 @@ impl Plugin for NyashkOpto {
                 bypass: p.bypass.value(),
                 auto_makeup: p.auto_makeup.value(),
                 trim_db: p.trim.smoothed.next(),
+                onset: match p.onset.value() {
+                    OnsetMode::Vintage => 0,
+                    OnsetMode::Soft => 1,
+                    OnsetMode::Firm => 2,
+                },
+                attack: p.attack.value() / 10.0,
+                release: p.release.value() / 60.0,
+                sc_hpf: { let f = p.sc_hpf.value(); if f < 20.5 { 0.0 } else { f } },
             };
             let n = frame.len().min(2);
             let mut x = [0.0f32; 2];

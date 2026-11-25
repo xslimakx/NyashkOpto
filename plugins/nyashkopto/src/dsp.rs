@@ -11,6 +11,20 @@ pub struct Params {
     pub bypass: bool,
     pub auto_makeup: bool,
     pub trim_db: f32,
+    /// onset guard: 0 = VINTAGE (off, peaks slip through like the hardware), 1 = SOFT, 2 = FIRM
+    pub onset: u8,
+    /// attack time multiplier (1 = the classic program-dependent attack)
+    pub attack: f32,
+    /// release time multiplier (1 = the classic two-stage release)
+    pub release: f32,
+    /// side-chain high-pass in Hz (0 = off): bass no longer pumps the compressor
+    pub sc_hpf: f32,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0, onset: 2, attack: 1.0, release: 1.0, sc_hpf: 0.0 }
+    }
 }
 
 /// tanh(1.25 x) / 1.25 with first-order antiderivative anti-aliasing (no oversampling needed for mild drive).
@@ -51,13 +65,15 @@ pub struct Comp {
     /// look-ahead delay line for the audio (the detector hears it this much earlier)
     la: [Vec<f32>; 2],
     la_pos: usize,
-    /// onset guard on (always in the plugin; switchable for tests)
-    pub guard: bool,
+    /// side-chain high-pass (RBJ biquad), its coefficients and the frequency they are for
+    hp_z: [f32; 2],
+    hp_c: [f32; 5],
+    hp_f: f32,
 }
 
 impl Comp {
     pub fn new(fs: f32) -> Self {
-        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2], ax: [0.0; 2], byp: 0.0, pk: 0.0, la: [vec![0.0; Self::la_len(fs)], vec![0.0; Self::la_len(fs)]], la_pos: 0, guard: true }
+        Self { fs, lvl2: 0.0, lp: 0.0, g_fast: 0.0, g_slow: 0.0, mem: 0.0, gr_db: 0.0, out_peak: 0.0, in_peak: 0.0, gr_avg: 0.0, hum_ph: 0.0, smooth_gain: 1.0, dc: [0.0; 2], ax: [0.0; 2], byp: 0.0, pk: 0.0, la: [vec![0.0; Self::la_len(fs)], vec![0.0; Self::la_len(fs)]], la_pos: 0, hp_z: [0.0; 2], hp_c: [1.0, 0.0, 0.0, 0.0, 0.0], hp_f: -1.0 }
     }
 
     /// look-ahead: 2 ms
@@ -92,13 +108,38 @@ impl Comp {
         }
         mean /= n as f32;
 
+        // ---- optional side-chain high-pass: the detector ignores the low end
+        let hpf_on = p.sc_hpf > 0.0;
+        let mut det = dry;
+        if hpf_on {
+            if (p.sc_hpf - self.hp_f).abs() > 0.01 {
+                self.hp_f = p.sc_hpf;
+                let w = 2.0 * std::f32::consts::PI * p.sc_hpf.min(self.fs * 0.45) / self.fs;
+                let (sn, cs) = w.sin_cos();
+                let al = sn / (2.0 * std::f32::consts::FRAC_1_SQRT_2);
+                let a0 = 1.0 + al;
+                self.hp_c = [(1.0 + cs) * 0.5 / a0, -(1.0 + cs) / a0, (1.0 + cs) * 0.5 / a0, -2.0 * cs / a0, (1.0 - al) / a0];
+            }
+            let [b0, b1, b2, a1, a2] = self.hp_c;
+            // transposed direct form II
+            let y = b0 * mean + self.hp_z[0];
+            self.hp_z[0] = b1 * mean - a1 * y + self.hp_z[1];
+            self.hp_z[1] = b2 * mean - a2 * y;
+            mean = y;
+            for d in det.iter_mut().take(n) {
+                *d = y;
+            }
+        } else {
+            self.hp_z = [0.0; 2];
+        }
+
         // ---- side-chain: optional high-frequency emphasis, linked stereo, RMS-ish level
         self.lp += self.coef(1.0 / (2.0 * std::f32::consts::PI * 2500.0)) * (mean - self.lp);
         let hp = mean - self.lp;
         let sc = mean + hp * p.hf_follow * 3.0;
         let mut pw = 0.0f32;
         for c in 0..n {
-            let v = dry[c] + (dry[c] - mean) * 0.0;
+            let v = det[c];
             pw += v * v;
         }
         pw /= n as f32;
@@ -124,7 +165,7 @@ impl Comp {
         // for its first 10-20 ms. An instant peak envelope says where the gain is heading; the cell
         // is pulled there at once, allowing `allow` dB above it, so steady material (where the
         // cell has already settled) is not touched and the opto character stays.
-        let ipk = dry.iter().take(n).fold(0.0f32, |m, v| m.max(v.abs()));
+        let ipk = det.iter().take(n).fold(0.0f32, |m, v| m.max(v.abs()));
         let pk_rel = (-1.0 / (0.015 * self.fs)).exp();
         self.pk = ipk.max(self.pk * pk_rel);
         let pk_db = 20.0 * (self.pk + 1e-9).log10();
@@ -137,8 +178,13 @@ impl Comp {
             let t = over_pk + knee * 0.5;
             (1.0 - 1.0 / ratio) * t * t / (2.0 * knee)
         };
-        let allow = if p.limit { 1.0 } else { 2.0 };
-        let guard = if self.guard { target_pk - allow } else { -100.0 };
+        let allow = match (p.onset, p.limit) {
+            (1, false) => 4.0,
+            (1, true) => 2.0,
+            (_, false) => 2.0,
+            (_, true) => 1.0,
+        };
+        let guard = if p.onset > 0 { target_pk - allow } else { -100.0 };
         if guard > self.g_fast {
             self.g_fast += (guard - self.g_fast) * self.coef(0.0004);
         }
@@ -147,13 +193,13 @@ impl Comp {
         }
 
         // ---- optical cell
-        let att_tau = (0.010 / (1.0 + (target - self.g_fast).max(0.0) / 6.0)).max(0.0015);
+        let att_tau = (0.010 / (1.0 + (target - self.g_fast).max(0.0) / 6.0)).max(0.0015) * p.attack;
         if target > self.g_fast {
             self.g_fast += (target - self.g_fast) * self.coef(att_tau);
         } else {
-            self.g_fast += (target - self.g_fast) * self.coef(0.035);
+            self.g_fast += (target - self.g_fast) * self.coef(0.035 * p.release);
         }
-        let slow_rel = 0.5 + 4.0 * self.mem;
+        let slow_rel = (0.5 + 4.0 * self.mem) * p.release;
         if target > self.g_slow {
             self.g_slow += (target - self.g_slow) * self.coef(att_tau);
         } else {
@@ -230,10 +276,9 @@ mod tests {
         let fs = 48000.0f32;
         for pr in [40.0f32, 70.0] {
             let mut res = vec![];
-            for guard in [false, true] {
+            for onset in [0u8, 2] {
                 let mut c = Comp::new(fs);
-                c.guard = guard;
-                let p = Params { peak_reduction: pr, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 };
+                let p = Params { peak_reduction: pr, onset, ..Params::default() };
                 let mut seed = 7u32;
                 let (mut gr, mut cnt) = (0.0f64, 0);
                 for i in 0..(fs * 6.0) as usize {
@@ -265,7 +310,7 @@ mod tests {
         for pr in [40.0f32, 60.0, 80.0] {
             for limit in [false, true] {
                 let mut c = Comp::new(fs);
-                let p = Params { peak_reduction: pr, gain_db: 0.0, limit, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 };
+                let p = Params { peak_reduction: pr, gain_db: 0.0, limit, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0, ..Params::default() };
                 let n = (fs * 1.5) as usize;
                 let on = (fs * 0.5) as usize;
                 let (mut first, mut steady) = (0.0f32, 0.0f32);
@@ -284,8 +329,79 @@ mod tests {
             }
         }
     }
+    /// burst of a loud entry: first 20 ms over the level 0.6 s later, in dB
+    fn burst(p: &Params) -> f32 {
+        let fs = 48000.0f32;
+        let mut c = Comp::new(fs);
+        let on = (fs * 0.5) as usize;
+        let (mut first, mut steady) = (0.0f32, 0.0f32);
+        for i in 0..(fs * 1.5) as usize {
+            let t = i as f32 / fs;
+            let s = if i >= on { 0.5 * (2.0 * 3.14159 * 220.0 * t).sin() } else { 0.0 };
+            let mut x = [s, s];
+            c.process(p, &mut x, 2);
+            let o = on + c.latency();
+            if i >= o && i < o + (fs * 0.02) as usize { first = first.max(x[0].abs()); }
+            if i > on + (fs * 0.6) as usize { steady = steady.max(x[0].abs()); }
+        }
+        20.0 * (first / steady).log10()
+    }
+
+    #[test]
+    /// VINTAGE lets the entry through, SOFT a little, FIRM almost nothing; a slower attack lets more through
+    fn onset_modes_and_attack_are_ordered() {
+        let b = |onset: u8, attack: f32| burst(&Params { peak_reduction: 60.0, onset, attack, ..Params::default() });
+        let (v, s, f) = (b(0, 1.0), b(1, 1.0), b(2, 1.0));
+        eprintln!("burst: vintage {v:.1} dB, soft {s:.1} dB, firm {f:.1} dB");
+        assert!(v > s + 1.0 && s > f + 0.5 && f < 3.0, "{v} {s} {f}");
+        let (fast, slow) = (b(0, 0.25), b(0, 4.0));
+        eprintln!("vintage burst: attack x0.25 {fast:.1} dB, x4 {slow:.1} dB");
+        assert!(slow > fast + 2.0, "{fast} {slow}");
+    }
+
+    #[test]
+    /// slower release = gain reduction lasts longer after the signal stops
+    fn release_scales_recovery() {
+        let fs = 48000.0f32;
+        let after = |release: f32| {
+            let mut c = Comp::new(fs);
+            let p = Params { peak_reduction: 60.0, release, ..Params::default() };
+            for i in 0..(fs * 1.2) as usize {
+                let t = i as f32 / fs;
+                let s = if t < 1.0 { 0.5 * (2.0 * 3.14159 * 220.0 * t).sin() } else { 0.0 };
+                let mut x = [s, s];
+                c.process(&p, &mut x, 2);
+            }
+            c.gr_db
+        };
+        let (fast, slow) = (after(0.25), after(4.0));
+        eprintln!("GR 200 ms after the end: release x0.25 {fast:.2} dB, x4 {slow:.2} dB");
+        assert!(slow > fast + 1.0, "{fast} {slow}");
+    }
+
+    #[test]
+    /// the side-chain high-pass: a bass tone barely moves the cell, the audio is not filtered
+    fn sc_hpf_ignores_bass() {
+        let fs = 48000.0f32;
+        let gr = |sc_hpf: f32| {
+            let mut c = Comp::new(fs);
+            let p = Params { peak_reduction: 60.0, sc_hpf, ..Params::default() };
+            let mut out_pk = 0.0f32;
+            for i in 0..(fs * 2.0) as usize {
+                let s = 0.5 * (2.0 * 3.14159 * 50.0 * i as f32 / fs).sin();
+                let mut x = [s, s];
+                c.process(&p, &mut x, 2);
+                if i > (fs * 1.5) as usize { out_pk = out_pk.max(x[0].abs()); }
+            }
+            (c.gr_db, out_pk)
+        };
+        let (off, on) = (gr(0.0), gr(200.0));
+        eprintln!("50 Hz tone GR: SC HPF off {:.1} dB, 200 Hz {:.1} dB (out peak {:.2})", off.0, on.0, on.1);
+        assert!(off.0 > 5.0 && on.0 < 1.0 && on.1 > 0.45, "{off:?} {on:?}");
+    }
+
     fn par() -> Params {
-        Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0 }
+        Params { peak_reduction: 0.0, gain_db: 0.0, limit: false, hf_follow: 0.0, analog: 0, mix: 1.0, bypass: false, auto_makeup: false, trim_db: 0.0, ..Params::default() }
     }
     fn run(p: &Params, amp: f32, f: f32, n: usize) -> Vec<f32> {
         let fs = 48000.0;
