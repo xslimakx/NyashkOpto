@@ -30,6 +30,8 @@ struct Gui {
     /// the envelope preview (a tone burst through the real compressor) and the settings it is for
     env: Vec<[f32; 2]>,
     env_key: [f32; 6],
+    /// the proportions were checked for this window (once: a host may refuse the resize)
+    size_checked: bool,
 }
 
 /// Runs a tone burst through the compressor with the current settings: per column the input and
@@ -79,10 +81,11 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
     let size_state = editor_state.clone();
     create_egui_editor(
         editor_state,
-        Gui { hw: None, needle: 0.0, wave_pos: 0, wave_t: Instant::now(), env: Vec::new(), env_key: [-1.0; 6] },
+        Gui { hw: None, needle: 0.0, wave_pos: 0, wave_t: Instant::now(), env: Vec::new(), env_key: [-1.0; 6], size_checked: false },
         |ctx, st| {
             // a new window gets a new egui context: textures must be loaded again
             st.hw = None;
+            st.size_checked = false;
             let mut v = egui::Visuals::dark();
             v.override_text_color = Some(Color32::from_rgb(232, 230, 224));
             v.selection.bg_fill = Color32::from_rgb(120, 80, 30);
@@ -90,8 +93,10 @@ pub fn create(params: Arc<OptoParams>, meters: Arc<Meters>) -> Option<Box<dyn Ed
         },
         move |ctx, setter, st| {
             ctx.request_repaint_after(Duration::from_millis(33));
-            // a window saved by an older version (another height): restore the proportions
-            {
+            // a window size from an older version (another height; the saved state moved to
+            // editor-state-v2, this is a safety net): restore the proportions once
+            if !st.size_checked {
+                st.size_checked = true;
                 let (w, h) = size_state.size();
                 let want = (w as f32 * BASE_H / BASE_W).round() as u32;
                 if h.abs_diff(want) > 2 {

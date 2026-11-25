@@ -111,7 +111,7 @@ pub enum OnsetMode {
 
 #[derive(Params)]
 pub struct OptoParams {
-    #[persist = "editor-state"]
+    #[persist = "editor-state-v2"]
     pub editor_state: Arc<EguiState>,
 
     #[id = "bypass"]

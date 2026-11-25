@@ -137,12 +137,7 @@ impl Comp {
         self.lp += self.coef(1.0 / (2.0 * std::f32::consts::PI * 2500.0)) * (mean - self.lp);
         let hp = mean - self.lp;
         let sc = mean + hp * p.hf_follow * 3.0;
-        let mut pw = 0.0f32;
-        for c in 0..n {
-            let v = det[c];
-            pw += v * v;
-        }
-        pw /= n as f32;
+        let pw = det.iter().take(n).map(|v| v * v).sum::<f32>() / n as f32;
         let sc_pw = (sc * sc).max(pw * 0.25);
         self.lvl2 += self.coef(0.003) * (sc_pw - self.lvl2);
         let lvl_db = 10.0 * (self.lvl2 + 1e-12).log10() + 3.0; // sine peak-referenced
